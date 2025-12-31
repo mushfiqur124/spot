@@ -31,7 +31,4 @@ A chat-based fitness tracking app for iOS that removes the friction from logging
 3. Complete onboarding to set up your profile
 4. Start chatting with Spot to log your workouts!
 
-## License
-
-[Add your license here]
 
