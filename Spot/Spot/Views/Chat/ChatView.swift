@@ -30,6 +30,8 @@ struct ChatView: View {
     @State private var exerciseSuggestions: [Exercise] = []
     @State private var suggestionsCollapsed: Bool = false
     @State private var isNearBottom: Bool = true
+    @State private var keyboardHeight: CGFloat = 0
+    @State private var scrollProxy: ScrollViewProxy?
     
     // Swipe gesture threshold
     private let swipeThreshold: CGFloat = 100
@@ -91,6 +93,20 @@ struct ChatView: View {
         }
         .gesture(edgeSwipeGesture)
         .animation(.easeOut(duration: 0.25), value: showHistoryPanel)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { notification in
+            if let keyboardFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect {
+                keyboardHeight = keyboardFrame.height
+            }
+            // Auto-scroll to bottom when keyboard opens (iMessage UX)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                withAnimation(.easeOut(duration: 0.25)) {
+                    scrollProxy?.scrollTo(bottomAnchor, anchor: .bottom)
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            keyboardHeight = 0
+        }
         .animation(.easeInOut(duration: 0.25), value: shouldShowQuickActions)
     }
     
@@ -135,72 +151,43 @@ struct ChatView: View {
     // MARK: - Main Content
     
     private var mainContent: some View {
-        ZStack(alignment: .bottom) {
-            // Main VStack content
-            VStack(spacing: 0) {
-                // Expandable Header
-                ExpandableWorkoutHeader(
-                    session: viewModel.activeSession,
-                    conversation: viewModel.currentConversation,
-                    userProfile: userProfile,
-                    onMenuTap: {
-                        withAnimation(.easeOut(duration: 0.25)) {
-                            showHistoryPanel = true
-                        }
-                    },
-                    onNewChat: {
-                        viewModel.startNewConversation()
-                    },
-                    onOpenDashboard: onOpenDashboard,
-                    isExpanded: $headerExpanded
-                )
-                
-                // Messages
-                messagesScrollView
-                
-                // Quick actions (only show when appropriate)
-                if shouldShowQuickActions {
-                    quickActionsView
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
-                
-                // Input
-                InputCapsule(
-                    text: $viewModel.inputText,
-                    placeholder: "Message Spot...",
-                    onSend: {
-                        Task {
-                            await viewModel.sendMessageStreaming()
-                        }
+        VStack(spacing: 0) {
+            // Expandable Header
+            ExpandableWorkoutHeader(
+                session: viewModel.activeSession,
+                conversation: viewModel.currentConversation,
+                userProfile: userProfile,
+                onMenuTap: {
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        showHistoryPanel = true
                     }
-                )
+                },
+                onNewChat: {
+                    viewModel.startNewConversation()
+                },
+                onOpenDashboard: onOpenDashboard,
+                isExpanded: $headerExpanded
+            )
+            
+            // Messages with pills as safe area inset
+            messagesScrollView
+            
+            // Quick actions (only show when appropriate)
+            if shouldShowQuickActions {
+                quickActionsView
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
             
-            // Floating exercise suggestion pills (above input, transparent background)
-            if !exerciseSuggestions.isEmpty && viewModel.activeSession != nil {
-                VStack(spacing: 0) {
-                    Spacer()
-                    
-                    CollapsibleSuggestionPills(
-                        exercises: exerciseSuggestions,
-                        isCollapsed: suggestionsCollapsed,
-                        onToggle: {
-                            withAnimation(.easeInOut(duration: 0.25)) {
-                                suggestionsCollapsed.toggle()
-                            }
-                        },
-                        onSelect: { exercise in
-                            // Auto-send the exercise name
-                            viewModel.inputText = exercise.name
-                            Task {
-                                await viewModel.sendMessageStreaming()
-                            }
-                        }
-                    )
-                    .padding(.bottom, shouldShowQuickActions ? 100 : 70) // Space for input + quick actions
+            // Input
+            InputCapsule(
+                text: $viewModel.inputText,
+                placeholder: "Message Spot...",
+                onSend: {
+                    Task {
+                        await viewModel.sendMessageStreaming()
+                    }
                 }
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
-            }
+            )
         }
         .onChange(of: viewModel.activeSession?.label) { _, newLabel in
             updateExerciseSuggestions()
@@ -237,6 +224,8 @@ struct ChatView: View {
     private var messagesScrollView: some View {
         ScrollViewReader { proxy in
             ScrollView {
+                // Store proxy reference for keyboard scroll
+                let _ = updateScrollProxy(proxy)
                 LazyVStack(spacing: SpotTheme.Spacing.sm) {
                     // Welcome message if empty
                     if viewModel.messages.isEmpty {
@@ -263,12 +252,6 @@ struct ChatView: View {
                     Color.clear
                         .frame(height: 1)
                         .id(bottomAnchor)
-                    
-                    // Extra padding when suggestions are visible to prevent overlap
-                    if !exerciseSuggestions.isEmpty && viewModel.activeSession != nil && !suggestionsCollapsed {
-                        Color.clear
-                            .frame(height: 50)
-                    }
                 }
                 .padding(.vertical, SpotTheme.Spacing.sm)
                 .background(
@@ -287,6 +270,29 @@ struct ChatView: View {
             }
             .coordinateSpace(name: "scrollView")
             .scrollDismissesKeyboard(.interactively)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                // Pills as safe area inset - this prevents overlap and adjusts scroll content automatically
+                if !exerciseSuggestions.isEmpty && viewModel.activeSession != nil {
+                    CollapsibleSuggestionPills(
+                        exercises: exerciseSuggestions,
+                        isCollapsed: suggestionsCollapsed,
+                        onToggle: {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                suggestionsCollapsed.toggle()
+                            }
+                        },
+                        onSelect: { exercise in
+                            // Auto-send the exercise name
+                            viewModel.inputText = exercise.name
+                            Task {
+                                await viewModel.sendMessageStreaming()
+                            }
+                        }
+                    )
+                    .padding(.bottom, SpotTheme.Spacing.sm)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
+            }
             .onPreferenceChange(ScrollOffsetPreferenceKey.self) { maxY in
                 // Detect if user has scrolled away from bottom
                 // When near bottom, maxY will be close to scroll view height
@@ -384,6 +390,16 @@ struct ChatView: View {
     /// Dismisses the keyboard by resigning first responder (matches modern chat app behavior)
     private func hideKeyboard() {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+    
+    /// Store scroll proxy for keyboard scroll (called from within ScrollViewReader)
+    private func updateScrollProxy(_ proxy: ScrollViewProxy) -> Bool {
+        DispatchQueue.main.async {
+            if self.scrollProxy == nil {
+                self.scrollProxy = proxy
+            }
+        }
+        return true
     }
     
     // MARK: - Edit Exercise Handler

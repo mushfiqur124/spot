@@ -71,6 +71,7 @@ class GeminiService: AIService {
         }
         
         // Create the model with tools and system instruction
+        // Use permissive safety settings to avoid false positives on workout terms like "Arm Day"
         self.model = GenerativeModel(
             name: Self.modelName,
             apiKey: apiKey,
@@ -78,6 +79,12 @@ class GeminiService: AIService {
                 temperature: 0.7,
                 maxOutputTokens: 1024
             ),
+            safetySettings: [
+                SafetySetting(harmCategory: .harassment, threshold: .blockOnlyHigh),
+                SafetySetting(harmCategory: .hateSpeech, threshold: .blockOnlyHigh),
+                SafetySetting(harmCategory: .sexuallyExplicit, threshold: .blockOnlyHigh),
+                SafetySetting(harmCategory: .dangerousContent, threshold: .blockOnlyHigh)
+            ],
             tools: [Tool(functionDeclarations: Self.functionDeclarations)],
             systemInstruction: ModelContent(role: "system", parts: [.text(SystemPrompt.persona)])
         )
@@ -135,44 +142,28 @@ class GeminiService: AIService {
         let userContent = ModelContent(role: "user", parts: [.text(text)])
         conversationHistory.append(userContent)
         
-        // Use generateContent instead of Chat to avoid SDK parsing bugs
-        // The Chat object has issues when text history is followed by function call responses
+        // Use generateContent with structured history
+        // NOTE: Previous flattening workaround was removed because it caused SDK parsing
+        // errors when the model responds with function calls in multi-turn conversations
         do {
-            // WORKAROUND: Flatten text-only history to avoid SDK serialization bugs
-            // The SDK often fails to decode responses when sending structured [ModelContent] history
-            // if it only contains text. We flatten it to a single prompt string.
-            var isTextOnly = true
-            var flattenedPrompt = ""
-            
-            for content in conversationHistory {
-                // Check if this content has any non-text parts
-                let hasNonText = content.parts.contains { part in
-                    if case .text = part { return false }
-                    return true
-                }
-                
-                if hasNonText {
-                    isTextOnly = false
-                    break
-                }
-                
-                // Append text to flattened prompt with role labels
-                if let text = content.parts.first?.text {
-                    let label = (content.role == "user") ? "User" : "Spot"
-                    flattenedPrompt += "\(label): \(text)\n"
-                }
+            // Debug: Log conversation history structure
+            print("[GeminiService] Sending \(conversationHistory.count) messages to Gemini")
+            for (index, content) in conversationHistory.enumerated() {
+                let partsDescription = content.parts.map { part -> String in
+                    if case .text(let text) = part {
+                        return "text(\(text.prefix(50))...)"
+                    } else if case .functionCall = part {
+                        return "functionCall"
+                    } else if case .functionResponse = part {
+                        return "functionResponse"
+                    }
+                    return "other"
+                }.joined(separator: ", ")
+                print("[GeminiService]   [\(index)] role=\(content.role ?? "nil") parts=[\(partsDescription)]")
             }
             
-            var response: GenerateContentResponse
-            if isTextOnly && !flattenedPrompt.isEmpty {
-                // Remove trailing newline
-                if flattenedPrompt.hasSuffix("\n") {
-                    flattenedPrompt.removeLast()
-                }
-                response = try await model.generateContent(flattenedPrompt)
-            } else {
-                response = try await model.generateContent(conversationHistory)
-            }
+            // Always use structured history - this ensures proper handling of function calls
+            var response = try await model.generateContent(conversationHistory)
             
             var fullResponse = ""
             
@@ -282,21 +273,76 @@ class GeminiService: AIService {
         } catch {
             print("[GeminiService] Send error: \(error)")
             
-            // Remove the user message we added since the request failed
-            if !conversationHistory.isEmpty {
-                conversationHistory.removeLast()
-            }
-            
             // Handle specific error types
             let errorMessage = String(describing: error)
             
-            if errorMessage.contains("InvalidCandidateError") || 
-               errorMessage.contains("malformedContent") ||
-               errorMessage.contains("keyNotFound") {
-                // SDK parsing error - often happens with edge cases
+            // Check if this is the multi-turn SDK parsing bug
+            if (errorMessage.contains("InvalidCandidateError") || 
+                errorMessage.contains("malformedContent") ||
+                errorMessage.contains("keyNotFound")) &&
+                conversationHistory.count > 1 {
+                
+                print("[GeminiService] Multi-turn SDK bug detected, retrying with context-embedded message")
+                
+                // Build a context-embedded single message to bypass the SDK bug
+                // This combines conversation history into a single prompt
+                var contextPrompt = "Previous conversation:\n"
+                for (index, content) in conversationHistory.dropLast().enumerated() {
+                    if let text = content.parts.first?.text {
+                        let role = (content.role == "user") ? "User" : "Assistant"
+                        contextPrompt += "\(role): \(text)\n"
+                    }
+                }
+                
+                // Add the current user message
+                if let lastMessage = conversationHistory.last?.parts.first?.text {
+                    contextPrompt += "\nCurrent user message: \(lastMessage)\n"
+                    contextPrompt += "\nRespond to the current user message based on the conversation context above."
+                }
+                
+                // Remove the failed user message from history
+                if !conversationHistory.isEmpty {
+                    conversationHistory.removeLast()
+                }
+                
+                // Retry with single context-embedded message
+                do {
+                    let retryResponse = try await model.generateContent(contextPrompt)
+                    
+                    // Check for function calls
+                    let functionCalls = retryResponse.functionCalls
+                    if !functionCalls.isEmpty {
+                        print("[GeminiService] Retry: Processing \(functionCalls.count) function calls")
+                        
+                        // Execute function calls
+                        let functionResponses = await handleFunctionCalls(functionCalls)
+                        let fallbackMessage = buildFallbackMessage(for: functionCalls)
+                        
+                        // Save to history and yield
+                        saveToHistory(fallbackMessage)
+                        continuation.yield(fallbackMessage)
+                        continuation.finish()
+                        return
+                    } else if let responseText = retryResponse.text, !responseText.isEmpty {
+                        let cleaned = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+                        saveToHistory(cleaned)
+                        continuation.yield(cleaned)
+                        continuation.finish()
+                        return
+                    }
+                } catch {
+                    print("[GeminiService] Retry also failed: \(error)")
+                }
+                
+                // Retry failed too
                 continuation.yield("I couldn't process that request. Could you try rephrasing?")
                 continuation.finish()
                 return
+            }
+            
+            // Remove the user message we added since the request failed
+            if !conversationHistory.isEmpty {
+                conversationHistory.removeLast()
             }
             
             if isRateLimitError(error) {
