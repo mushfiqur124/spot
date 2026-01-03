@@ -168,16 +168,16 @@ class ChatViewModel: ObservableObject {
             current.isActive = false
         }
         
+        // Reset LLM session to clear context from previous conversation
+        llmService?.resetSession()
+        
         currentConversation = conversation
         conversation.isActive = true
         loadMessages(for: conversation)
         
-        // Update active session if this is a workout conversation
-        if let session = conversation.linkedSession, session.isActive {
-            activeSession = session
-        } else {
-            activeSession = workoutService.getActiveSession()
-        }
+        // Update active session to the conversation's linked session
+        // This ensures the header shows the correct workout title
+        activeSession = conversation.linkedSession
     }
     
     /// Start a new conversation
@@ -194,6 +194,9 @@ class ChatViewModel: ObservableObject {
         
         // Save changes so they persist in history
         try? modelContext.save()
+        
+        // Reset LLM session for fresh context
+        llmService?.resetSession()
         
         // Reset to fresh state
         currentConversation = nil
@@ -282,9 +285,13 @@ class ChatViewModel: ObservableObject {
                 conversationHistory: messages
             ) { [weak self] partial in
                 Task { @MainActor in
-                    // Filter out "null" responses from streaming
-                    if partial != "null" && !partial.isEmpty {
-                        self?.streamingResponse = partial
+                    // Filter out "null" responses and tool call JSON from streaming
+                    let cleaned = partial.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if cleaned != "null" && !cleaned.isEmpty {
+                        // Filter out raw tool call JSON (e.g., {"name": "...", "arguments": {...}})
+                        if !cleaned.hasPrefix("{") || !cleaned.contains("\"name\"") || !cleaned.contains("\"arguments\"") {
+                            self?.streamingResponse = partial
+                        }
                     }
                 }
             }
@@ -297,9 +304,23 @@ class ChatViewModel: ObservableObject {
             // Detect if an exercise was logged
             let loggedExerciseInfo = detectLoggedExercise()
             
+            // Clean final response - remove any tool call JSON that might have leaked through
+            var cleanedResponse = finalResponse.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Filter out raw tool call JSON patterns
+            if cleanedResponse.hasPrefix("{") && cleanedResponse.contains("\"name\"") && cleanedResponse.contains("\"arguments\"") {
+                // This looks like a tool call JSON - try to extract a meaningful response
+                // If it's a log_workout_session, provide a friendly message
+                if cleanedResponse.contains("log_workout_session") {
+                    cleanedResponse = "Got it! What are we hitting today?"
+                } else {
+                    // For other tool calls, use a generic friendly response
+                    cleanedResponse = "Got it!"
+                }
+            }
+            
             // Add final assistant message
             let assistantMessage = ChatMessage(
-                content: finalResponse,
+                content: cleanedResponse,
                 role: .assistant,
                 conversation: conversation
             )
@@ -316,6 +337,9 @@ class ChatViewModel: ObservableObject {
             
             // Re-update active session state
             activeSession = workoutService.getActiveSession()
+            
+            // Check if any sets were edited and update logged exercise cards
+            updateLoggedExerciseCardsForEdits()
             
             // If a session was started, update the conversation
             if let session = activeSession,
@@ -380,7 +404,18 @@ class ChatViewModel: ObservableObject {
         
         // Generate response
         do {
-            let response = try await generateResponse(for: trimmedText)
+            var response = try await generateResponse(for: trimmedText)
+            
+            // Clean response - remove any tool call JSON that might have leaked through
+            let cleaned = response.trimmingCharacters(in: .whitespacesAndNewlines)
+            if cleaned.hasPrefix("{") && cleaned.contains("\"name\"") && cleaned.contains("\"arguments\"") {
+                // This looks like a tool call JSON - provide a friendly response
+                if cleaned.contains("log_workout_session") {
+                    response = "Got it! What are we hitting today?"
+                } else {
+                    response = "Got it!"
+                }
+            }
             
             // Add assistant message
             let assistantMessage = ChatMessage(
@@ -480,7 +515,11 @@ class ChatViewModel: ObservableObject {
             for workoutExercise in session.exercises {
                 if let exercise = workoutExercise.exercise {
                     previousExerciseSetCounts[exercise.name] = workoutExercise.sets.count
-                    previousExerciseMaxWeights[exercise.name] = exercise.allTimeMaxWeight ?? 0
+                    // Use the MAX of allTimeMaxWeight and current session's max weight
+                    // This ensures manual weight edits in the current session are captured
+                    let allTimeMax = exercise.allTimeMaxWeight ?? 0
+                    let sessionMax = workoutExercise.orderedSets.map(\.weight).max() ?? 0
+                    previousExerciseMaxWeights[exercise.name] = max(allTimeMax, sessionMax)
                 }
             }
         }
@@ -509,13 +548,14 @@ class ChatViewModel: ObservableObject {
             let currentSetCount = workoutExercise.sets.count
             let previousCount = previousExerciseSetCounts[exerciseName] ?? 0
             
-            // This exercise has new sets
-            if currentSetCount > previousCount {
+            // This exercise has new sets (or is a new exercise with sets)
+            // Check if sets were added OR if this is a new exercise that wasn't tracked before
+            if currentSetCount > previousCount || (currentSetCount > 0 && previousCount == 0 && !previousExerciseSetCounts.keys.contains(exerciseName)) {
                 let orderedSets = workoutExercise.orderedSets
-                let latestSet = orderedSets.last
                 let hasPR = orderedSets.contains { $0.isPR }
                 
-                // Build the logged sets info
+                // Build the logged sets info - only include NEW sets if we can determine which ones
+                // For simplicity, include all sets if this is a new exercise or if we can't determine
                 let setInfos: [LoggedExerciseInfo.LoggedSetInfo] = orderedSets.map { set in
                     LoggedExerciseInfo.LoggedSetInfo(
                         setNumber: set.setNumber,
@@ -541,5 +581,181 @@ class ChatViewModel: ObservableObject {
         guard !loggedExercises.isEmpty else { return nil }
         
         return LoggedExerciseInfo(exercises: loggedExercises)
+    }
+    
+    /// Update logged exercise cards in messages when sets are edited
+    /// This refreshes the cards to reflect current session state after edits
+    private func updateLoggedExerciseCardsForEdits() {
+        guard let session = activeSession ?? workoutService.getActiveSession() else { return }
+        
+        // Check if the last assistant message suggests an edit occurred
+        guard let lastContent = messages.last?.content.lowercased() else { return }
+        
+        // Detect if this was an edit operation
+        let isEditOperation = lastContent.contains("updated") ||
+                             lastContent.contains("changed") ||
+                             lastContent.contains("adjusted") ||
+                             lastContent.contains("edited") ||
+                             lastContent.contains("fixed")
+        
+        if !isEditOperation {
+            return
+        }
+        
+        // Update all messages that have logged exercise info
+        for message in messages where message.isAssistant {
+            guard let loggedInfo = message.loggedExerciseInfo else { continue }
+            
+            var updatedExercises: [LoggedExerciseInfo.ExerciseEntry] = []
+            
+            // Rebuild exercise entries from current session state
+            for exerciseEntry in loggedInfo.exercises {
+                // Find the exercise in the current session
+                guard let workoutExercise = session.exercises.first(where: { 
+                    $0.exercise?.name == exerciseEntry.exerciseName 
+                }),
+                let exercise = workoutExercise.exercise else {
+                    // Exercise not found, keep original entry
+                    updatedExercises.append(exerciseEntry)
+                    continue
+                }
+                
+                let orderedSets = workoutExercise.orderedSets
+                let updatedSetInfos: [LoggedExerciseInfo.LoggedSetInfo] = orderedSets.map { set in
+                    LoggedExerciseInfo.LoggedSetInfo(
+                        setNumber: set.setNumber,
+                        weight: set.weight,
+                        reps: set.reps,
+                        isPR: set.isPR
+                    )
+                }
+                
+                let hasPR = orderedSets.contains { $0.isPR }
+                let previousBest = previousExerciseMaxWeights[exercise.name]
+                
+                updatedExercises.append(LoggedExerciseInfo.ExerciseEntry(
+                    exerciseName: exercise.name,
+                    sets: updatedSetInfos,
+                    isPR: hasPR,
+                    previousBest: (hasPR && previousBest != nil && previousBest! > 0) ? previousBest : nil
+                ))
+            }
+            
+            // Update the message if anything changed
+            let updatedInfo = LoggedExerciseInfo(exercises: updatedExercises)
+            if updatedInfo != loggedInfo {
+                message.loggedExerciseInfo = updatedInfo
+            }
+        }
+        
+        // Trigger UI update
+        objectWillChange.send()
+    }
+    
+    // MARK: - Exercise Editing from UI
+    
+    /// Update an exercise from the edit sheet UI
+    func updateExercise(
+        originalName: String,
+        newName: String,
+        updatedSets: [(weight: Double, reps: Int)]
+    ) -> Bool {
+        let success = workoutService.updateExerciseFromEdit(
+            exerciseName: originalName,
+            newExerciseName: newName,
+            updatedSets: updatedSets
+        )
+        
+        if success {
+            // Update the logged exercise cards in messages
+            refreshLoggedExerciseCards()
+            objectWillChange.send()
+        }
+        
+        return success
+    }
+    
+    /// Reload messages for the current conversation
+    func reloadCurrentMessages() {
+        if let conversation = currentConversation {
+            loadMessages(for: conversation)
+        }
+        refreshLoggedExerciseCards()
+        objectWillChange.send()
+    }
+    
+    /// Refresh all logged exercise cards to reflect current session state
+    private func refreshLoggedExerciseCards() {
+        guard let session = activeSession ?? workoutService.getActiveSession() else { return }
+        
+        for message in messages where message.isAssistant {
+            guard let loggedInfo = message.loggedExerciseInfo else { continue }
+            
+            var updatedExercises: [LoggedExerciseInfo.ExerciseEntry] = []
+            
+            for exerciseEntry in loggedInfo.exercises {
+                // Find the exercise in the current session
+                guard let workoutExercise = session.exercises.first(where: { 
+                    $0.exercise?.name.lowercased() == exerciseEntry.exerciseName.lowercased() 
+                }),
+                let exercise = workoutExercise.exercise else {
+                    // Try to find by matching renamed exercise
+                    if let workoutExercise = session.exercises.first(where: { we in
+                        we.orderedSets.count == exerciseEntry.sets.count
+                    }),
+                    let exercise = workoutExercise.exercise {
+                        // This might be the renamed exercise
+                        let orderedSets = workoutExercise.orderedSets
+                        let updatedSetInfos: [LoggedExerciseInfo.LoggedSetInfo] = orderedSets.map { set in
+                            LoggedExerciseInfo.LoggedSetInfo(
+                                setNumber: set.setNumber,
+                                weight: set.weight,
+                                reps: set.reps,
+                                isPR: set.isPR
+                            )
+                        }
+                        
+                        let hasPR = orderedSets.contains { $0.isPR }
+                        
+                        updatedExercises.append(LoggedExerciseInfo.ExerciseEntry(
+                            exerciseName: exercise.name,
+                            sets: updatedSetInfos,
+                            isPR: hasPR,
+                            previousBest: exerciseEntry.previousBest
+                        ))
+                        continue
+                    }
+                    
+                    // Exercise not found, keep original entry
+                    updatedExercises.append(exerciseEntry)
+                    continue
+                }
+                
+                let orderedSets = workoutExercise.orderedSets
+                let updatedSetInfos: [LoggedExerciseInfo.LoggedSetInfo] = orderedSets.map { set in
+                    LoggedExerciseInfo.LoggedSetInfo(
+                        setNumber: set.setNumber,
+                        weight: set.weight,
+                        reps: set.reps,
+                        isPR: set.isPR
+                    )
+                }
+                
+                let hasPR = orderedSets.contains { $0.isPR }
+                
+                updatedExercises.append(LoggedExerciseInfo.ExerciseEntry(
+                    exerciseName: exercise.name,
+                    sets: updatedSetInfos,
+                    isPR: hasPR,
+                    previousBest: exerciseEntry.previousBest
+                ))
+            }
+            
+            // Update the message
+            let updatedInfo = LoggedExerciseInfo(exercises: updatedExercises)
+            message.loggedExerciseInfo = updatedInfo
+        }
+        
+        try? modelContext.save()
     }
 }

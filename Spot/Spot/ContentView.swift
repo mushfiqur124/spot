@@ -2,76 +2,63 @@
 //  ContentView.swift
 //  Spot
 //
-//  Main entry point view - checks device compatibility and displays
-//  the appropriate view (chat or incompatible device screen).
+//  Main entry point view - displays the appropriate view
+//  (chat, onboarding, or error screen based on state).
 //
 
 import SwiftUI
 import SwiftData
-import FoundationModels
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
-    @State private var compatibilityStatus: CompatibilityStatus = .checking
+    @State private var isReady: Bool = false
     @State private var showOnboarding: Bool = false
     @State private var userProfile: UserProfile?
     @State private var showDashboard: Bool = false
-    
-    enum CompatibilityStatus {
-        case checking
-        case compatible
-        case incompatible(IncompatibleDeviceView.IncompatibilityReason)
-    }
+    @State private var initializationError: String? = nil
     
     var body: some View {
         Group {
-            switch compatibilityStatus {
-            case .checking:
+            if !isReady {
                 loadingView
-            case .compatible:
-                if showOnboarding {
-                    OnboardingView {
-                        // Onboarding complete - reload profile
-                        loadUserProfile()
-                        showOnboarding = false
-                    }
-                } else if #available(iOS 26.0, *) {
-                    if showDashboard {
-                        DashboardView(
-                            userProfile: userProfile,
-                            onDismiss: {
-                                withAnimation(.easeInOut(duration: 0.3)) {
-                                    showDashboard = false
-                                }
+            } else if let error = initializationError {
+                errorView(message: error)
+            } else if showOnboarding {
+                OnboardingView {
+                    // Onboarding complete - reload profile
+                    loadUserProfile()
+                    showOnboarding = false
+                }
+            } else if #available(iOS 26.0, *) {
+                if showDashboard {
+                    DashboardView(
+                        userProfile: userProfile,
+                        onDismiss: {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                showDashboard = false
                             }
-                        )
-                        .transition(.move(edge: .trailing))
-                    } else {
-                        ChatView(
-                            modelContext: modelContext,
-                            userProfile: userProfile,
-                            onOpenDashboard: {
-                                withAnimation(.easeInOut(duration: 0.3)) {
-                                    showDashboard = true
-                                }
-                            }
-                        )
-                        .transition(.move(edge: .leading))
-                    }
+                        }
+                    )
+                    .transition(.move(edge: .trailing))
                 } else {
-                    // This shouldn't happen since we check availability first
-                    IncompatibleDeviceView(reason: .deviceNotEligible)
+                    ChatView(
+                        modelContext: modelContext,
+                        userProfile: userProfile,
+                        onOpenDashboard: {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                showDashboard = true
+                            }
+                        }
+                    )
+                    .transition(.move(edge: .leading))
                 }
-            case .incompatible(let reason):
-                IncompatibleDeviceView(reason: reason) {
-                    // Retry callback
-                    checkCompatibility()
-                }
+            } else {
+                // iOS version too old
+                errorView(message: "This app requires iOS 26 or later.")
             }
         }
         .task {
-            checkCompatibility()
-            loadUserProfile()
+            await initialize()
         }
     }
     
@@ -87,37 +74,48 @@ struct ContentView: View {
                     .scaleEffect(1.2)
                     .tint(SpotTheme.clay)
                 
-                Text("Checking compatibility...")
+                Text("Loading...")
                     .font(SpotTheme.Typography.subheadline)
                     .foregroundStyle(SpotTheme.textSecondary)
             }
         }
     }
     
-    // MARK: - Compatibility Check
+    // MARK: - Error View
     
-    private func checkCompatibility() {
-        // Check if iOS 26+ is available
-        guard #available(iOS 26.0, *) else {
-            compatibilityStatus = .incompatible(.deviceNotEligible)
-            return
+    private func errorView(message: String) -> some View {
+        ZStack {
+            SpotTheme.canvas
+                .ignoresSafeArea()
+            
+            VStack(spacing: SpotTheme.Spacing.lg) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 48))
+                    .foregroundStyle(SpotTheme.clay.opacity(0.7))
+                
+                Text("Setup Required")
+                    .font(SpotTheme.Typography.title)
+                    .foregroundStyle(SpotTheme.textPrimary)
+                
+                Text(message)
+                    .font(SpotTheme.Typography.body)
+                    .foregroundStyle(SpotTheme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, SpotTheme.Spacing.xl)
+            }
         }
+    }
+    
+    // MARK: - Initialization
+    
+    private func initialize() async {
+        // Load user profile first
+        loadUserProfile()
         
-        // Check Foundation Models availability
-        let availability = LLMService.checkAvailability()
+        // Small delay to ensure smooth transition
+        try? await Task.sleep(nanoseconds: 300_000_000)
         
-        switch availability {
-        case .available:
-            compatibilityStatus = .compatible
-        case .deviceNotEligible:
-            compatibilityStatus = .incompatible(.deviceNotEligible)
-        case .appleIntelligenceNotEnabled:
-            compatibilityStatus = .incompatible(.appleIntelligenceNotEnabled)
-        case .modelNotReady:
-            compatibilityStatus = .incompatible(.modelNotReady)
-        case .unknown:
-            compatibilityStatus = .incompatible(.unknown)
-        }
+        isReady = true
     }
     
     // MARK: - User Profile

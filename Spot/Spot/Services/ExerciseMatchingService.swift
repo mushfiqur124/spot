@@ -22,7 +22,8 @@ class ExerciseMatchingService {
     private let modelContext: ModelContext
     
     /// Minimum similarity score (0-1) required to consider a fuzzy match
-    private let fuzzyMatchThreshold: Double = 0.6
+    /// Set high (0.8) to avoid incorrect matches like "barbell squats" → "bicep curls"
+    private let fuzzyMatchThreshold: Double = 0.8
     
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
@@ -57,6 +58,7 @@ class ExerciseMatchingService {
     /// - Returns: Match result with confidence score
     func findBestMatch(for name: String) -> ExerciseMatchResult {
         let normalized = normalize(name)
+        let inputWords = Set(normalized.split(separator: " ").map { String($0) })
         
         // Fetch all exercises
         let descriptor = FetchDescriptor<Exercise>()
@@ -84,7 +86,21 @@ class ExerciseMatchingService {
         var bestScore: Double = 0
         
         for exercise in exercises {
-            let score = similarity(normalized, normalize(exercise.name))
+            let exerciseNormalized = normalize(exercise.name)
+            let score = similarity(normalized, exerciseNormalized)
+            
+            // For fuzzy matches, also check word overlap to prevent wrong matches
+            // e.g., "barbell squats" should NOT match "bicep curls"
+            if score < 0.95 && score > 0 {
+                let exerciseWords = Set(exerciseNormalized.split(separator: " ").map { String($0) })
+                let sharedWords = inputWords.intersection(exerciseWords)
+                
+                // Require at least one shared word for lower-confidence matches
+                if sharedWords.isEmpty {
+                    continue // Skip this match - no words in common
+                }
+            }
+            
             if score > bestScore {
                 bestScore = score
                 bestMatch = exercise
@@ -97,6 +113,34 @@ class ExerciseMatchingService {
             isExactMatch: false,
             normalizedInput: normalized
         )
+    }
+    
+    /// Get all exercises sorted by name
+    func getAllExercises() -> [Exercise] {
+        let descriptor = FetchDescriptor<Exercise>(
+            sortBy: [SortDescriptor(\.name)]
+        )
+        return (try? modelContext.fetch(descriptor)) ?? []
+    }
+    
+    /// Search exercises by name with fuzzy matching
+    /// Returns matches sorted by confidence score (highest first)
+    func searchExercises(query: String) -> [(exercise: Exercise, confidence: Double)] {
+        guard !query.isEmpty else { return [] }
+        
+        let allExercises = getAllExercises()
+        let normalizedQuery = normalize(query)
+        
+        var results: [(exercise: Exercise, confidence: Double)] = []
+        
+        for exercise in allExercises {
+            let score = similarity(normalizedQuery, normalize(exercise.name))
+            if score >= 0.3 { // Lower threshold for search suggestions
+                results.append((exercise: exercise, confidence: score))
+            }
+        }
+        
+        return results.sorted { $0.confidence > $1.confidence }
     }
     
     /// Get all exercises matching a muscle group

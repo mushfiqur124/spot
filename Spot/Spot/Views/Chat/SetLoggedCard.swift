@@ -1,24 +1,22 @@
-//
-//  SetLoggedCard.swift
-//  Spot
-//
-//  Inline card shown in chat when sets are logged.
-//  Supports multiple exercises in one message.
-//
-
 import SwiftUI
 
 struct SetLoggedCard: View {
     let info: LoggedExerciseInfo
+    let onEdit: ((LoggedExerciseInfo.ExerciseEntry, String, [(weight: Double, reps: Int)]) -> Void)?
     
     // Animation states
     @State private var opacity: Double = 0
     @State private var scale: CGFloat = 0.9
     
+    init(info: LoggedExerciseInfo, onEdit: ((LoggedExerciseInfo.ExerciseEntry, String, [(weight: Double, reps: Int)]) -> Void)? = nil) {
+        self.info = info
+        self.onEdit = onEdit
+    }
+    
     var body: some View {
         VStack(spacing: SpotTheme.Spacing.sm) {
             ForEach(info.exercises) { exercise in
-                ExerciseLoggedRow(exercise: exercise)
+                ExerciseLoggedRow(exercise: exercise, onEdit: onEdit)
             }
         }
         .padding(.horizontal, SpotTheme.Spacing.md)
@@ -37,6 +35,9 @@ struct SetLoggedCard: View {
 
 private struct ExerciseLoggedRow: View {
     let exercise: LoggedExerciseInfo.ExerciseEntry
+    let onEdit: ((LoggedExerciseInfo.ExerciseEntry, String, [(weight: Double, reps: Int)]) -> Void)?
+    
+    @State private var showEditSheet = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: SpotTheme.Spacing.sm) {
@@ -70,18 +71,34 @@ private struct ExerciseLoggedRow: View {
                 }
             }
             
-            // PR callout if applicable
-            if exercise.isPR, let previous = exercise.previousBest {
-                HStack(spacing: SpotTheme.Spacing.xxs) {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundStyle(SpotTheme.sage)
-                    
-                    Text("Previous best: \(Int(previous)) lbs")
-                        .font(SpotTheme.Typography.caption)
-                        .foregroundStyle(SpotTheme.textSecondary)
+            // Bottom row: PR callout and edit button
+            HStack(alignment: .center) {
+                // PR callout if applicable
+                if exercise.isPR, let previous = exercise.previousBest {
+                    HStack(spacing: SpotTheme.Spacing.xxs) {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(SpotTheme.sage)
+                        
+                        Text("Previous best: \(Int(previous)) lbs")
+                            .font(SpotTheme.Typography.caption)
+                            .foregroundStyle(SpotTheme.textSecondary)
+                    }
                 }
-                .padding(.top, SpotTheme.Spacing.xxs)
+                
+                Spacer()
+                
+                // Edit button - bottom right
+                if onEdit != nil {
+                    Button {
+                        showEditSheet = true
+                    } label: {
+                        Image(systemName: "pencil")
+                            .font(.system(size: 12))
+                            .foregroundStyle(SpotTheme.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
         .padding(SpotTheme.Spacing.md)
@@ -93,6 +110,11 @@ private struct ExerciseLoggedRow: View {
                         .strokeBorder(SpotTheme.sage.opacity(0.2), lineWidth: 1)
                 )
         )
+        .sheet(isPresented: $showEditSheet) {
+            EditExerciseSheet(exercise: exercise) { newName, updatedSets in
+                onEdit?(exercise, newName, updatedSets)
+            }
+        }
     }
 }
 

@@ -36,7 +36,7 @@ struct LoggedExerciseInfo: Codable, Equatable, Sendable {
         
         var quickSummary: String {
             if isBodyweight {
-                return "BW x \(reps)"
+                return weight > 0 ? "BW (\(Int(weight))) x \(reps)" : "BW x \(reps)"
             }
             return "\(Int(weight)) x \(reps)"
         }

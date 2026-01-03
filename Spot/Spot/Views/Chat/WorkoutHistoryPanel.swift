@@ -20,6 +20,7 @@ struct WorkoutHistoryPanel: View {
     let onOpenDashboard: () -> Void
     
     @State private var conversations: [Conversation] = []
+    @State private var showSettings: Bool = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -85,15 +86,20 @@ struct WorkoutHistoryPanel: View {
     
     private var headerView: some View {
         HStack(spacing: SpotTheme.Spacing.sm) {
-            // Profile avatar
-            Circle()
-                .fill(SpotTheme.clay.opacity(0.2))
-                .frame(width: 44, height: 44)
-                .overlay(
-                    Text(userProfile?.firstName.prefix(1).uppercased() ?? "?")
-                        .font(SpotTheme.Typography.headline)
-                        .foregroundStyle(SpotTheme.clay)
-                )
+            // Profile avatar - tappable to open settings
+            Button {
+                showSettings = true
+            } label: {
+                Circle()
+                    .fill(SpotTheme.clay.opacity(0.2))
+                    .frame(width: 44, height: 44)
+                    .overlay(
+                        Text(userProfile?.firstName.prefix(1).uppercased() ?? "?")
+                            .font(SpotTheme.Typography.headline)
+                            .foregroundStyle(SpotTheme.clay)
+                    )
+            }
+            .buttonStyle(.plain)
             
             VStack(alignment: .leading, spacing: 2) {
                 Text(userProfile?.firstName ?? "Athlete")
@@ -121,6 +127,9 @@ struct WorkoutHistoryPanel: View {
         }
         .padding(.horizontal, SpotTheme.Spacing.md)
         .padding(.vertical, SpotTheme.Spacing.md)
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
+        }
     }
     
     // MARK: - Dashboard Button

@@ -14,6 +14,7 @@ struct ExpandableWorkoutHeader: View {
     let userProfile: UserProfile?
     let onMenuTap: () -> Void
     let onNewChat: () -> Void
+    var onOpenDashboard: (() -> Void)? = nil
     
     @Binding var isExpanded: Bool
     
@@ -104,8 +105,9 @@ struct ExpandableWorkoutHeader: View {
             
             Spacer()
             
-            // Right side - New chat button and expand indicator
+            // Right side buttons
             if hasActiveConversation {
+                // Show new chat and expand buttons when there's an active conversation
                 HStack(spacing: SpotTheme.Spacing.sm) {
                     // New chat button
                     Button {
@@ -128,6 +130,16 @@ struct ExpandableWorkoutHeader: View {
                                 .foregroundStyle(SpotTheme.textSecondary)
                         }
                     }
+                }
+            } else if let onOpenDashboard = onOpenDashboard {
+                // Show dashboard button when chat is empty
+                Button {
+                    onOpenDashboard()
+                } label: {
+                    Image(systemName: "chart.bar.xaxis")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(SpotTheme.sage)
+                        .frame(width: 44, height: 44)
                 }
             }
         }

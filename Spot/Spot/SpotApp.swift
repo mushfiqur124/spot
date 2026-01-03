@@ -10,6 +10,12 @@ import SwiftData
 
 @main
 struct SpotApp: App {
+    @AppStorage("appearanceMode") private var appearanceModeRaw = AppearanceMode.system.rawValue
+    
+    private var appearanceMode: AppearanceMode {
+        AppearanceMode(rawValue: appearanceModeRaw) ?? .system
+    }
+    
     var sharedModelContainer: ModelContainer = {
         // Register all SwiftData models
         let schema = Schema([
@@ -37,6 +43,7 @@ struct SpotApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .preferredColorScheme(appearanceMode.colorScheme)
         }
         .modelContainer(sharedModelContainer)
     }

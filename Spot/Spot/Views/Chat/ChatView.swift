@@ -27,6 +27,7 @@ struct ChatView: View {
     @State private var showHistoryPanel: Bool = false
     @State private var headerExpanded: Bool = false
     @State private var dragOffset: CGFloat = 0
+    @State private var exerciseSuggestions: [Exercise] = []
     
     // Swipe gesture threshold
     private let swipeThreshold: CGFloat = 100
@@ -132,43 +133,88 @@ struct ChatView: View {
     // MARK: - Main Content
     
     private var mainContent: some View {
-        VStack(spacing: 0) {
-            // Expandable Header
-            ExpandableWorkoutHeader(
-                session: viewModel.activeSession,
-                conversation: viewModel.currentConversation,
-                userProfile: userProfile,
-                onMenuTap: {
-                    withAnimation(.easeOut(duration: 0.25)) {
-                        showHistoryPanel = true
+        ZStack(alignment: .bottom) {
+            // Main VStack content
+            VStack(spacing: 0) {
+                // Expandable Header
+                ExpandableWorkoutHeader(
+                    session: viewModel.activeSession,
+                    conversation: viewModel.currentConversation,
+                    userProfile: userProfile,
+                    onMenuTap: {
+                        withAnimation(.easeOut(duration: 0.25)) {
+                            showHistoryPanel = true
+                        }
+                    },
+                    onNewChat: {
+                        viewModel.startNewConversation()
+                    },
+                    onOpenDashboard: onOpenDashboard,
+                    isExpanded: $headerExpanded
+                )
+                
+                // Messages
+                messagesScrollView
+                
+                // Quick actions (only show when appropriate)
+                if shouldShowQuickActions {
+                    quickActionsView
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
+                
+                // Input
+                InputCapsule(
+                    text: $viewModel.inputText,
+                    placeholder: "Message Spot...",
+                    onSend: {
+                        Task {
+                            await viewModel.sendMessageStreaming()
+                        }
                     }
-                },
-                onNewChat: {
-                    viewModel.startNewConversation()
-                },
-                isExpanded: $headerExpanded
-            )
-            
-            // Messages
-            messagesScrollView
-            
-            // Quick actions (only show when appropriate)
-            if shouldShowQuickActions {
-                quickActionsView
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                )
             }
             
-            // Input
-            InputCapsule(
-                text: $viewModel.inputText,
-                placeholder: "Message Spot...",
-                onSend: {
-                    Task {
-                        await viewModel.sendMessageStreaming()
+            // Floating exercise suggestion pills (above input, transparent background)
+            if !exerciseSuggestions.isEmpty && viewModel.activeSession != nil {
+                VStack(spacing: 0) {
+                    Spacer()
+                    
+                    ExerciseSuggestionPills(exercises: exerciseSuggestions) { exercise in
+                        // Auto-send the exercise name
+                        viewModel.inputText = exercise.name
+                        Task {
+                            await viewModel.sendMessageStreaming()
+                        }
                     }
+                    .padding(.bottom, shouldShowQuickActions ? 100 : 70) // Space for input + quick actions
                 }
-            )
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
         }
+        .onChange(of: viewModel.activeSession?.label) { _, newLabel in
+            updateExerciseSuggestions()
+        }
+        .onChange(of: viewModel.activeSession?.exercises.count) { _, _ in
+            updateExerciseSuggestions()
+        }
+        .onAppear {
+            updateExerciseSuggestions()
+        }
+    }
+    
+    /// Update exercise suggestions based on workout label, excluding exercises already done
+    private func updateExerciseSuggestions() {
+        guard let session = viewModel.activeSession,
+              let label = session.label as String? else {
+            exerciseSuggestions = []
+            return
+        }
+        
+        // Get names of exercises already performed in this session
+        let alreadyDone = Set(session.exercises.compactMap { $0.exercise?.name })
+        
+        let service = ExerciseSuggestionService(modelContext: modelContext)
+        exerciseSuggestions = service.getSuggestions(for: label, limit: 6, excluding: alreadyDone)
     }
     
     private var shouldShowQuickActions: Bool {
@@ -188,7 +234,7 @@ struct ChatView: View {
                     
                     // Chat messages
                     ForEach(viewModel.messages) { message in
-                        MessageBubble(message: message)
+                        MessageBubble(message: message, onEditExercise: handleEditExercise)
                     }
                     
                     // Streaming response (shows while AI is responding)
@@ -208,6 +254,11 @@ struct ChatView: View {
                         .id(bottomAnchor)
                 }
                 .padding(.vertical, SpotTheme.Spacing.sm)
+                // Tap anywhere on empty space to dismiss keyboard (matches Claude/ChatGPT/Gemini iOS)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    hideKeyboard()
+                }
             }
             .scrollDismissesKeyboard(.interactively)
             .onChange(of: viewModel.messages.count) { _, _ in
@@ -286,6 +337,33 @@ struct ChatView: View {
             }
         }
         .padding(.vertical, SpotTheme.Spacing.sm)
+    }
+    
+    // MARK: - Keyboard Dismiss Helper
+    
+    /// Dismisses the keyboard by resigning first responder (matches modern chat app behavior)
+    private func hideKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+    
+    // MARK: - Edit Exercise Handler
+    
+    private func handleEditExercise(
+        exercise: LoggedExerciseInfo.ExerciseEntry,
+        newName: String,
+        updatedSets: [(weight: Double, reps: Int)]
+    ) {
+        // Call the workout service to update the exercise
+        let success = viewModel.updateExercise(
+            originalName: exercise.exerciseName,
+            newName: newName,
+            updatedSets: updatedSets
+        )
+        
+        // Reload messages to reflect changes
+        if success {
+            viewModel.reloadCurrentMessages()
+        }
     }
 }
 

@@ -72,15 +72,18 @@ final class WorkoutSet {
         weight * Double(reps)
     }
     
-    /// Formatted weight string (e.g., "185 lbs" or "BW")
+    /// Formatted weight string (e.g., "185 lbs" or "BW (170 lbs)")
     var formattedWeight: String {
-        isBodyweight ? "BW" : "\(Int(weight)) lbs"
+        if isBodyweight {
+            return weight > 0 ? "BW (\(Int(weight)) lbs)" : "BW"
+        }
+        return "\(Int(weight)) lbs"
     }
     
-    /// Quick summary string (e.g., "185 x 8" or "BW x 8")
+    /// Quick summary string (e.g., "185 x 8" or "BW (170) x 8")
     var quickSummary: String {
         if isBodyweight {
-            return "BW x \(reps)"
+            return weight > 0 ? "BW (\(Int(weight))) x \(reps)" : "BW x \(reps)"
         }
         return "\(Int(weight)) x \(reps)"
     }
@@ -89,7 +92,8 @@ final class WorkoutSet {
     var fullSummary: String {
         if let rpe = rpe {
             if isBodyweight {
-                return "BW x \(reps) @ RPE \(rpe)"
+                let bwDisplay = weight > 0 ? "BW (\(Int(weight)))" : "BW"
+                return "\(bwDisplay) x \(reps) @ RPE \(rpe)"
             }
             return "\(Int(weight)) x \(reps) @ RPE \(rpe)"
         }

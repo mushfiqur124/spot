@@ -19,7 +19,7 @@ struct OnboardingView: View {
     @State private var heightFeet: Int = 5
     @State private var heightInches: Int = 10
     @State private var weight: String = ""
-    @State private var selectedGoal: UserProfile.FitnessGoal?
+    @State private var selectedGoals: Set<UserProfile.FitnessGoal> = []
     
     // Callbacks
     var onComplete: () -> Void
@@ -44,9 +44,9 @@ struct OnboardingView: View {
         var subtitle: String {
             switch self {
             case .welcome: return ""
-            case .name: return "Just your first name is fine"
-            case .physicalStats: return "Optional - helps with recommendations"
-            case .goals: return "Optional - helps me tailor advice"
+            case .name: return ""
+            case .physicalStats: return "Required for tracking bodyweight exercises"
+            case .goals: return "Select all that apply"
             }
         }
     }
@@ -245,10 +245,14 @@ struct OnboardingView: View {
                 ForEach(UserProfile.FitnessGoal.allCases, id: \.rawValue) { goal in
                     GoalCard(
                         goal: goal,
-                        isSelected: selectedGoal == goal
+                        isSelected: selectedGoals.contains(goal)
                     ) {
                         withAnimation(.easeInOut(duration: 0.2)) {
-                            selectedGoal = selectedGoal == goal ? nil : goal
+                            if selectedGoals.contains(goal) {
+                                selectedGoals.remove(goal)
+                            } else {
+                                selectedGoals.insert(goal)
+                            }
                         }
                     }
                 }
@@ -301,7 +305,7 @@ struct OnboardingView: View {
         case .name:
             return "Continue"
         case .physicalStats:
-            return weight.isEmpty ? "Skip" : "Continue"
+            return "Continue"
         case .goals:
             return "Finish"
         }
@@ -313,7 +317,10 @@ struct OnboardingView: View {
             return true
         case .name:
             return !name.trimmingCharacters(in: .whitespaces).isEmpty
-        case .physicalStats, .goals:
+        case .physicalStats:
+            // Require weight to be entered
+            return !weight.trimmingCharacters(in: .whitespaces).isEmpty && Double(weight) != nil
+        case .goals:
             return true
         }
     }
@@ -349,7 +356,7 @@ struct OnboardingView: View {
             name: trimmedName,
             heightInches: totalHeightInches,
             weightLbs: weightValue,
-            fitnessGoal: selectedGoal?.rawValue,
+            fitnessGoals: selectedGoals.map { $0.rawValue },
             hasCompletedOnboarding: true
         )
         

@@ -7,12 +7,20 @@
 //
 
 import SwiftUI
+import SwiftData
 
 struct ExerciseHistoryList: View {
     let exercises: [Exercise]
     
     @State private var expandedExerciseID: UUID?
     @State private var searchText: String = ""
+    @State private var editingExercise: Exercise?
+    @State private var editedName: String = ""
+    @State private var showingRenameAlert = false
+    @State private var exerciseToDelete: Exercise?
+    @State private var showingDeleteConfirmation = false
+    
+    @Environment(\.modelContext) private var modelContext
     
     var body: some View {
         VStack(alignment: .leading, spacing: SpotTheme.Spacing.sm) {
@@ -60,8 +68,8 @@ struct ExerciseHistoryList: View {
             if filteredExercises.isEmpty {
                 emptyState
             } else {
-                LazyVStack(spacing: SpotTheme.Spacing.xs) {
-                    ForEach(filteredExercises) { exercise in
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(filteredExercises.enumerated()), id: \.element.id) { index, exercise in
                         ExerciseHistoryRow(
                             exercise: exercise,
                             isExpanded: expandedExerciseID == exercise.id
@@ -74,6 +82,28 @@ struct ExerciseHistoryList: View {
                                 }
                             }
                         }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button(role: .destructive) {
+                                exerciseToDelete = exercise
+                                showingDeleteConfirmation = true
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                            
+                            Button {
+                                startEditing(exercise)
+                            } label: {
+                                Label("Edit", systemImage: "pencil")
+                            }
+                            .tint(SpotTheme.clay)
+                        }
+                        
+                        // Add divider between exercises (not after the last one)
+                        if index < filteredExercises.count - 1 {
+                            Divider()
+                                .background(SpotTheme.textSecondary.opacity(0.1))
+                                .padding(.leading, SpotTheme.Spacing.sm)
+                        }
                     }
                 }
             }
@@ -83,6 +113,70 @@ struct ExerciseHistoryList: View {
             RoundedRectangle(cornerRadius: SpotTheme.Radius.medium, style: .continuous)
                 .fill(SpotTheme.textPrimary.opacity(0.03))
         )
+        .alert("Rename Exercise", isPresented: $showingRenameAlert) {
+            TextField("Exercise name", text: $editedName)
+                .autocapitalization(.words)
+            
+            Button("Cancel", role: .cancel) {
+                editingExercise = nil
+            }
+            
+            Button("Save") {
+                saveRename()
+            }
+            .disabled(editedName.trimmingCharacters(in: .whitespaces).isEmpty)
+        } message: {
+            Text("Enter a new name for this exercise")
+        }
+        .alert("Delete Exercise", isPresented: $showingDeleteConfirmation) {
+            Button("Cancel", role: .cancel) {
+                exerciseToDelete = nil
+            }
+            
+            Button("Delete", role: .destructive) {
+                deleteExercise()
+            }
+        } message: {
+            if let exercise = exerciseToDelete {
+                Text("Are you sure you want to delete \"\(exercise.name)\"? All workout history for this exercise will be permanently removed.")
+            }
+        }
+    }
+    
+    // MARK: - Actions
+    
+    private func startEditing(_ exercise: Exercise) {
+        editingExercise = exercise
+        editedName = exercise.name
+        showingRenameAlert = true
+    }
+    
+    private func saveRename() {
+        guard let exercise = editingExercise else { return }
+        
+        let trimmedName = editedName.trimmingCharacters(in: .whitespaces)
+        guard !trimmedName.isEmpty else { return }
+        
+        // Check if name already exists (case-insensitive)
+        let nameExists = exercisesWithHistory.contains {
+            $0.id != exercise.id && $0.name.lowercased() == trimmedName.lowercased()
+        }
+        
+        if !nameExists {
+            exercise.name = trimmedName
+            try? modelContext.save()
+        }
+        
+        editingExercise = nil
+    }
+    
+    private func deleteExercise() {
+        guard let exercise = exerciseToDelete else { return }
+        
+        modelContext.delete(exercise)
+        try? modelContext.save()
+        
+        exerciseToDelete = nil
     }
     
     // MARK: - Computed

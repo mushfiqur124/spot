@@ -141,6 +141,7 @@ struct ProgressionChart: View {
                     .foregroundStyle(SpotTheme.textSecondary.opacity(0.2))
             }
         }
+        .chartYScale(domain: yAxisDomain(for: dataPoints))
         .frame(height: 200)
     }
     
@@ -250,6 +251,19 @@ struct ProgressionChart: View {
     }
     
     // MARK: - Data
+    
+    private func yAxisDomain(for dataPoints: [ProgressDataPoint]) -> ClosedRange<Double> {
+        let values = dataPoints.map(\.value)
+        let minVal = values.min() ?? 0
+        let maxVal = values.max() ?? 0
+        
+        // Ensure we always have a visible range
+        if minVal == maxVal {
+            return 0...(max(maxVal, 10) + 10)
+        }
+        let padding = (maxVal - minVal) * 0.1
+        return max(0, minVal - padding)...(maxVal + padding)
+    }
     
     private var exercisesWithHistory: [Exercise] {
         exercises.filter { !$0.history.isEmpty }

@@ -11,6 +11,7 @@ import SwiftUI
 
 struct MessageBubble: View {
     let message: ChatMessage
+    var onEditExercise: ((LoggedExerciseInfo.ExerciseEntry, String, [(weight: Double, reps: Int)]) -> Void)? = nil
     
     // Animation states
     @State private var opacity: Double = 0
@@ -61,7 +62,7 @@ struct MessageBubble: View {
             userBubble
         } else if let loggedInfo = message.loggedExerciseInfo {
             // Show logged exercise card instead of text bubble
-            SetLoggedCard(info: loggedInfo)
+            SetLoggedCard(info: loggedInfo, onEdit: onEditExercise)
         } else {
             aiBubble
         }

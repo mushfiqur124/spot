@@ -30,6 +30,33 @@ struct ExerciseHistoryEntry {
     }
 }
 
+/// Result returned when fetching all PRs
+struct AllPRsResult {
+    let prs: [PREntry]
+    let totalCount: Int
+    
+    struct PREntry {
+        let exerciseName: String
+        let weight: Double
+        let volume: Double
+        let muscleGroup: String
+    }
+}
+
+/// Result returned when editing a set
+struct EditSetResult {
+    let exerciseName: String
+    let setNumber: Int
+    let weight: Double
+    let reps: Int
+}
+
+/// Result returned when deleting a set
+struct DeleteSetResult {
+    let exerciseName: String
+    let setNumber: Int
+}
+
 @MainActor
 class WorkoutService {
     private let modelContext: ModelContext
@@ -112,6 +139,12 @@ class WorkoutService {
             return nil
         }
         
+        // Convert BW exercises to use actual body weight
+        var actualWeight = weight
+        if isBodyweight && weight == 0 {
+            actualWeight = getUserBodyWeight() ?? 0
+        }
+        
         // Find or create the exercise definition
         let exercise = matchingService.findOrCreate(name: exerciseName, muscleGroup: muscleGroup)
         
@@ -126,12 +159,12 @@ class WorkoutService {
         
         // Check for PR
         let previousBest = exercise.allTimeMaxWeight
-        let isPR = checkAndUpdatePR(exercise: exercise, weight: weight, reps: reps)
+        let isPR = checkAndUpdatePR(exercise: exercise, weight: actualWeight, reps: reps)
         
         // Create the set
         let newSet = WorkoutSet(
             setNumber: setNumber,
-            weight: weight,
+            weight: actualWeight,
             reps: reps,
             rpe: rpe,
             isPR: isPR,
@@ -147,6 +180,16 @@ class WorkoutService {
             previousBest: previousBest,
             exercise: exercise
         )
+    }
+    
+    /// Get the user's body weight from their profile
+    /// - Returns: User's weight in pounds, or nil if not set
+    private func getUserBodyWeight() -> Double? {
+        let descriptor = FetchDescriptor<UserProfile>()
+        guard let profile = try? modelContext.fetch(descriptor).first else {
+            return nil
+        }
+        return profile.weightLbs
     }
     
     /// Find or create a WorkoutExercise for a given Exercise in a session
@@ -516,6 +559,52 @@ class WorkoutService {
         
         try? modelContext.save()
         
+        return true
+    }
+    
+    /// Update an exercise from the edit sheet
+    /// - Parameters:
+    ///   - exerciseName: Current exercise name to find
+    ///   - newExerciseName: New exercise name (may be same or different)
+    ///   - updatedSets: Array of updated (weight, reps) for each set
+    /// - Returns: true if successful
+    func updateExerciseFromEdit(
+        exerciseName: String,
+        newExerciseName: String,
+        updatedSets: [(weight: Double, reps: Int)]
+    ) -> Bool {
+        guard let session = getActiveSession() else { return false }
+        
+        // Find the workout exercise by current name
+        let result = matchingService.findBestMatch(for: exerciseName)
+        guard let exercise = result.exercise else { return false }
+        
+        guard let workoutExercise = session.exercises.first(where: { $0.exercise?.id == exercise.id }) else {
+            return false
+        }
+        
+        // If exercise name changed, update to new exercise
+        if exerciseName.lowercased() != newExerciseName.lowercased() {
+            let newExercise = matchingService.findOrCreate(
+                name: newExerciseName, 
+                muscleGroup: exercise.muscleGroup
+            )
+            
+            // Update the workout exercise to point to the new exercise
+            workoutExercise.exercise = newExercise
+            newExercise.history.append(workoutExercise)
+        }
+        
+        // Update sets
+        let orderedSets = workoutExercise.orderedSets
+        for (index, setData) in updatedSets.enumerated() {
+            if index < orderedSets.count {
+                orderedSets[index].weight = setData.weight
+                orderedSets[index].reps = setData.reps
+            }
+        }
+        
+        try? modelContext.save()
         return true
     }
 }

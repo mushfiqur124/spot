@@ -25,8 +25,8 @@ final class UserProfile {
     /// User's weight in pounds (optional)
     var weightLbs: Double?
     
-    /// User's fitness goal (optional)
-    var fitnessGoal: String?
+    /// User's fitness goals (supports multi-select)
+    var fitnessGoals: [String]
     
     /// When the profile was created
     var createdAt: Date
@@ -40,14 +40,14 @@ final class UserProfile {
         name: String,
         heightInches: Double? = nil,
         weightLbs: Double? = nil,
-        fitnessGoal: String? = nil,
+        fitnessGoals: [String] = [],
         hasCompletedOnboarding: Bool = false
     ) {
         self.id = UUID()
         self.name = name
         self.heightInches = heightInches
         self.weightLbs = weightLbs
-        self.fitnessGoal = fitnessGoal
+        self.fitnessGoals = fitnessGoals
         self.createdAt = Date()
         self.hasCompletedOnboarding = hasCompletedOnboarding
     }
