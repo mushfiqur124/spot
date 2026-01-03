@@ -28,6 +28,8 @@ struct ChatView: View {
     @State private var headerExpanded: Bool = false
     @State private var dragOffset: CGFloat = 0
     @State private var exerciseSuggestions: [Exercise] = []
+    @State private var suggestionsCollapsed: Bool = false
+    @State private var isNearBottom: Bool = true
     
     // Swipe gesture threshold
     private let swipeThreshold: CGFloat = 100
@@ -179,13 +181,22 @@ struct ChatView: View {
                 VStack(spacing: 0) {
                     Spacer()
                     
-                    ExerciseSuggestionPills(exercises: exerciseSuggestions) { exercise in
-                        // Auto-send the exercise name
-                        viewModel.inputText = exercise.name
-                        Task {
-                            await viewModel.sendMessageStreaming()
+                    CollapsibleSuggestionPills(
+                        exercises: exerciseSuggestions,
+                        isCollapsed: suggestionsCollapsed,
+                        onToggle: {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                suggestionsCollapsed.toggle()
+                            }
+                        },
+                        onSelect: { exercise in
+                            // Auto-send the exercise name
+                            viewModel.inputText = exercise.name
+                            Task {
+                                await viewModel.sendMessageStreaming()
+                            }
                         }
-                    }
+                    )
                     .padding(.bottom, shouldShowQuickActions ? 100 : 70) // Space for input + quick actions
                 }
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -252,15 +263,44 @@ struct ChatView: View {
                     Color.clear
                         .frame(height: 1)
                         .id(bottomAnchor)
+                    
+                    // Extra padding when suggestions are visible to prevent overlap
+                    if !exerciseSuggestions.isEmpty && viewModel.activeSession != nil && !suggestionsCollapsed {
+                        Color.clear
+                            .frame(height: 50)
+                    }
                 }
                 .padding(.vertical, SpotTheme.Spacing.sm)
+                .background(
+                    GeometryReader { geometry in
+                        Color.clear.preference(
+                            key: ScrollOffsetPreferenceKey.self,
+                            value: geometry.frame(in: .named("scrollView")).maxY
+                        )
+                    }
+                )
                 // Tap anywhere on empty space to dismiss keyboard (matches Claude/ChatGPT/Gemini iOS)
                 .contentShape(Rectangle())
                 .onTapGesture {
                     hideKeyboard()
                 }
             }
+            .coordinateSpace(name: "scrollView")
             .scrollDismissesKeyboard(.interactively)
+            .onPreferenceChange(ScrollOffsetPreferenceKey.self) { maxY in
+                // Detect if user has scrolled away from bottom
+                // When near bottom, maxY will be close to scroll view height
+                // A buffer of 100 accounts for input area + minor scrolling
+                let wasNearBottom = isNearBottom
+                isNearBottom = maxY < UIScreen.main.bounds.height + 150
+                
+                // Auto-collapse when scrolling up (away from bottom)
+                if wasNearBottom && !isNearBottom && !suggestionsCollapsed {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        suggestionsCollapsed = true
+                    }
+                }
+            }
             .onChange(of: viewModel.messages.count) { _, _ in
                 withAnimation(.easeOut(duration: 0.3)) {
                     proxy.scrollTo(bottomAnchor, anchor: .bottom)
@@ -364,6 +404,16 @@ struct ChatView: View {
         if success {
             viewModel.reloadCurrentMessages()
         }
+    }
+}
+
+// MARK: - Scroll Offset Preference Key
+
+/// Preference key to track scroll position for auto-collapsing suggestions
+struct ScrollOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 
