@@ -552,10 +552,8 @@ class ChatViewModel: ObservableObject {
             // Check if sets were added OR if this is a new exercise that wasn't tracked before
             if currentSetCount > previousCount || (currentSetCount > 0 && previousCount == 0 && !previousExerciseSetCounts.keys.contains(exerciseName)) {
                 let orderedSets = workoutExercise.orderedSets
-                let hasPR = orderedSets.contains { $0.isPR }
                 
-                // Build the logged sets info - only include NEW sets if we can determine which ones
-                // For simplicity, include all sets if this is a new exercise or if we can't determine
+                // Build the logged sets info
                 let setInfos: [LoggedExerciseInfo.LoggedSetInfo] = orderedSets.map { set in
                     LoggedExerciseInfo.LoggedSetInfo(
                         setNumber: set.setNumber,
@@ -565,14 +563,26 @@ class ChatViewModel: ObservableObject {
                     )
                 }
                 
+                // Check if we strictly exceeded the previous best (if it existed)
+                // Use the MAX of session sets to determine if we hit a PR in this session
+                let sessionMax = orderedSets.map(\.weight).max() ?? 0
+                
                 // Get the previous best weight (captured before the message was sent)
                 let previousBest = previousExerciseMaxWeights[exerciseName]
+                let previousBestWeight = previousBest ?? 0
+                
+                // Only mark as PR if we beat the previous best
+                // If previousBest is nil/0, it's a new exercise (also counts as PR for logging purposes, but UI handles "New")
+                let strictPR = sessionMax > previousBestWeight
+                
+                // We use strictPR for the badge logic
+                // If previousBest was nil, strictPR is true (sessionMax > 0), and SetLoggedCard handles the "New" badge
                 
                 loggedExercises.append(LoggedExerciseInfo.ExerciseEntry(
                     exerciseName: exerciseName,
                     sets: setInfos,
-                    isPR: hasPR,
-                    previousBest: (hasPR && previousBest != nil && previousBest! > 0) ? previousBest : nil
+                    isPR: strictPR,
+                    previousBest: (strictPR && previousBest != nil && previousBest! > 0) ? previousBest : nil
                 ))
             }
         }
@@ -630,14 +640,16 @@ class ChatViewModel: ObservableObject {
                     )
                 }
                 
-                let hasPR = orderedSets.contains { $0.isPR }
+                let sessionMax = orderedSets.map(\.weight).max() ?? 0
                 let previousBest = previousExerciseMaxWeights[exercise.name]
+                let previousBestWeight = previousBest ?? 0
+                let strictPR = sessionMax > previousBestWeight
                 
                 updatedExercises.append(LoggedExerciseInfo.ExerciseEntry(
                     exerciseName: exercise.name,
                     sets: updatedSetInfos,
-                    isPR: hasPR,
-                    previousBest: (hasPR && previousBest != nil && previousBest! > 0) ? previousBest : nil
+                    isPR: strictPR,
+                    previousBest: (strictPR && previousBest != nil && previousBest! > 0) ? previousBest : nil
                 ))
             }
             
@@ -715,14 +727,18 @@ class ChatViewModel: ObservableObject {
                             )
                         }
                         
-                        let hasPR = orderedSets.contains { $0.isPR }
+                        let sessionMax = orderedSets.map(\.weight).max() ?? 0
+                        let previousBestWeight = exerciseEntry.previousBest ?? 0
+                        // Strict PR check using the preserved previousBest from original entry
+                        let strictPR = sessionMax > previousBestWeight
                         
                         updatedExercises.append(LoggedExerciseInfo.ExerciseEntry(
                             exerciseName: exercise.name,
                             sets: updatedSetInfos,
-                            isPR: hasPR,
+                            isPR: strictPR,
                             previousBest: exerciseEntry.previousBest
                         ))
+                        continue
                         continue
                     }
                     
@@ -741,12 +757,15 @@ class ChatViewModel: ObservableObject {
                     )
                 }
                 
-                let hasPR = orderedSets.contains { $0.isPR }
+                let sessionMax = orderedSets.map(\.weight).max() ?? 0
+                let previousBestWeight = exerciseEntry.previousBest ?? 0
+                // Strict PR check using the preserved previousBest from original entry
+                let strictPR = sessionMax > previousBestWeight
                 
                 updatedExercises.append(LoggedExerciseInfo.ExerciseEntry(
                     exerciseName: exercise.name,
                     sets: updatedSetInfos,
-                    isPR: hasPR,
+                    isPR: strictPR,
                     previousBest: exerciseEntry.previousBest
                 ))
             }

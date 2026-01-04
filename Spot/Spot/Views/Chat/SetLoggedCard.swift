@@ -54,7 +54,11 @@ private struct ExerciseLoggedRow: View {
                 Spacer()
                 
                 if exercise.isPR {
-                    PRBadge()
+                    if exercise.previousBest == nil {
+                        NewExerciseBadge()
+                    } else {
+                        PRBadge()
+                    }
                 }
             }
             
