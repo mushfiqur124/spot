@@ -71,6 +71,7 @@ struct EditExerciseSheet: View {
                     ForEach($editableSets) { $set in
                         SetEditRow(set: $set)
                     }
+                    .onDelete(perform: deleteSet)
                 } header: {
                     Text("Sets")
                 }
@@ -126,6 +127,10 @@ struct EditExerciseSheet: View {
         } else {
             searchResults = service.searchExercises(query: query)
         }
+    }
+    
+    private func deleteSet(at offsets: IndexSet) {
+        editableSets.remove(atOffsets: offsets)
     }
 }
 

@@ -596,11 +596,42 @@ class WorkoutService {
         }
         
         // Update sets
+        // Update sets
         let orderedSets = workoutExercise.orderedSets
+        
+        // 1. Update existing sets
         for (index, setData) in updatedSets.enumerated() {
             if index < orderedSets.count {
                 orderedSets[index].weight = setData.weight
                 orderedSets[index].reps = setData.reps
+            } else {
+                // Handle potentially added sets (robustness)
+                let newSet = WorkoutSet(
+                    setNumber: index + 1,
+                    weight: setData.weight,
+                    reps: setData.reps,
+                    isPR: false, // Re-evaluating PRs would be complex here, keeping simple
+                    workoutExercise: workoutExercise
+                )
+                modelContext.insert(newSet)
+                workoutExercise.sets.append(newSet)
+            }
+        }
+        
+        // 2. Delete extra sets if any were removed
+        if orderedSets.count > updatedSets.count {
+            // Get the sets that need to be removed (from the end)
+            // Note: orderedSets are sorted by setNumber, so we remove the highest numbers
+            let setsToRemove = orderedSets.suffix(orderedSets.count - updatedSets.count)
+            
+            for set in setsToRemove {
+                // Delete from context
+                modelContext.delete(set)
+                
+                // Remove from the relationship array
+                if let idx = workoutExercise.sets.firstIndex(where: { $0.id == set.id }) {
+                    workoutExercise.sets.remove(at: idx)
+                }
             }
         }
         
