@@ -23,7 +23,7 @@ class ExerciseMatchingService {
     
     /// Minimum similarity score (0-1) required to consider a fuzzy match
     /// Set high (0.8) to avoid incorrect matches like "barbell squats" → "bicep curls"
-    private let fuzzyMatchThreshold: Double = 0.8
+    let fuzzyMatchThreshold: Double = 0.8
     
     init(modelContext: ModelContext) {
         self.modelContext = modelContext

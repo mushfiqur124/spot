@@ -251,7 +251,7 @@ class WorkoutService {
     /// Get the personal record for an exercise
     func getPR(exerciseName: String) -> (weight: Double, volume: Double)? {
         let result = matchingService.findBestMatch(for: exerciseName)
-        guard let exercise = result.exercise else { return nil }
+        guard let exercise = result.exercise, result.confidence >= matchingService.fuzzyMatchThreshold else { return nil }
         
         return (
             weight: exercise.allTimeMaxWeight ?? 0,
@@ -315,13 +315,14 @@ class WorkoutService {
     /// Get the last time a specific exercise was performed
     func getLastExerciseStats(exerciseName: String) -> WorkoutExercise? {
         let result = matchingService.findBestMatch(for: exerciseName)
+        guard result.confidence >= matchingService.fuzzyMatchThreshold else { return nil }
         return result.exercise?.lastPerformed
     }
     
     /// Get exercise history across multiple sessions
     func getExerciseHistory(exerciseName: String, limit: Int = 3) -> [ExerciseHistoryEntry] {
         let result = matchingService.findBestMatch(for: exerciseName)
-        guard let exercise = result.exercise else { return [] }
+        guard let exercise = result.exercise, result.confidence >= matchingService.fuzzyMatchThreshold else { return [] }
         
         // Get workout exercises sorted by date (newest first)
         let workoutExercises = exercise.history
@@ -437,7 +438,7 @@ class WorkoutService {
         
         // Find the exercise
         let result = matchingService.findBestMatch(for: exerciseName)
-        guard let exercise = result.exercise else { return nil }
+        guard let exercise = result.exercise, result.confidence >= matchingService.fuzzyMatchThreshold else { return nil }
         
         guard let workoutExercise = session.exercises.first(where: { $0.exercise?.id == exercise.id }) else {
             return nil
@@ -489,7 +490,7 @@ class WorkoutService {
         
         // Find the exercise
         let result = matchingService.findBestMatch(for: exerciseName)
-        guard let exercise = result.exercise else { return nil }
+        guard let exercise = result.exercise, result.confidence >= matchingService.fuzzyMatchThreshold else { return nil }
         
         guard let workoutExercise = session.exercises.first(where: { $0.exercise?.id == exercise.id }) else {
             return nil
@@ -540,7 +541,7 @@ class WorkoutService {
         
         // Find the exercise
         let result = matchingService.findBestMatch(for: exerciseName)
-        guard let exercise = result.exercise else { return false }
+        guard let exercise = result.exercise, result.confidence >= matchingService.fuzzyMatchThreshold else { return false }
         
         guard let workoutExercise = session.exercises.first(where: { $0.exercise?.id == exercise.id }) else {
             return false
@@ -577,7 +578,7 @@ class WorkoutService {
         
         // Find the workout exercise by current name
         let result = matchingService.findBestMatch(for: exerciseName)
-        guard let exercise = result.exercise else { return false }
+        guard let exercise = result.exercise, result.confidence >= matchingService.fuzzyMatchThreshold else { return false }
         
         guard let workoutExercise = session.exercises.first(where: { $0.exercise?.id == exercise.id }) else {
             return false
