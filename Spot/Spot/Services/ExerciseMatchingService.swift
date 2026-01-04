@@ -37,14 +37,42 @@ class ExerciseMatchingService {
     ///   - muscleGroup: The muscle group (used if creating new)
     /// - Returns: The matched or newly created Exercise
     func findOrCreate(name: String, muscleGroup: String) -> Exercise {
-        let result = findBestMatch(for: name)
+        // First check for exact match, including hidden ones
+        // If we find a hidden one, we should unhide it because the user is explicitly using it
+        let normalized = normalize(name)
+        let descriptor = FetchDescriptor<Exercise>(
+            predicate: #Predicate { $0.name == normalized || $0.name == name } // Simplify predicate for now
+        )
+        // Note: String comparison in Predicate can be tricky with normalization. 
+        // We'll rely on fetching and filtering if ensuring exact case-insensitive match matters most,
+        // but let's try to use findBestMatch logic which handles normalization well.
         
-        // If we found a good match, return it
-        if let exercise = result.exercise, result.confidence >= fuzzyMatchThreshold {
-            return exercise
+        let result = findBestMatch(for: name, includeHidden: true)
+        
+        if let exercise = result.exercise {
+            // If it's an exact match (or very high confidence), use it
+            if result.isExactMatch || result.confidence >= 0.95 {
+                // Unhide if it was hidden
+                if exercise.isHidden {
+                    exercise.isHidden = false
+                    try? modelContext.save()
+                }
+                return exercise
+            }
+            
+            // If it's a good fuzzy match, we might want to return it, 
+            // but standard behavior is to trust user input for new variations.
+            // However, for "Bench Pres" -> "Bench Press", we likely want the existing one.
+            if result.confidence >= fuzzyMatchThreshold {
+                if exercise.isHidden {
+                    exercise.isHidden = false
+                    try? modelContext.save()
+                }
+                return exercise
+            }
         }
         
-        // Otherwise create a new exercise
+        // Create new
         let newExercise = Exercise(
             name: normalizeForStorage(name),
             muscleGroup: muscleGroup
@@ -55,20 +83,18 @@ class ExerciseMatchingService {
     
     /// Find the best matching exercise for a given name
     /// - Parameter name: The user-provided exercise name
+    /// - Parameter includeHidden: Whether to include hidden exercises (default false)
     /// - Returns: Match result with confidence score
-    func findBestMatch(for name: String) -> ExerciseMatchResult {
+    func findBestMatch(for name: String, includeHidden: Bool = false) -> ExerciseMatchResult {
         let normalized = normalize(name)
         let inputWords = Set(normalized.split(separator: " ").map { String($0) })
         
         // Fetch all exercises
         let descriptor = FetchDescriptor<Exercise>()
-        guard let exercises = try? modelContext.fetch(descriptor) else {
-            return ExerciseMatchResult(
-                exercise: nil,
-                confidence: 0,
-                isExactMatch: false,
-                normalizedInput: normalized
-            )
+        var exercises = (try? modelContext.fetch(descriptor)) ?? []
+        
+        if !includeHidden {
+            exercises = exercises.filter { !$0.isHidden }
         }
         
         // Check for exact match first
@@ -118,6 +144,7 @@ class ExerciseMatchingService {
     /// Get all exercises sorted by name
     func getAllExercises() -> [Exercise] {
         let descriptor = FetchDescriptor<Exercise>(
+            predicate: #Predicate { !$0.isHidden },
             sortBy: [SortDescriptor(\.name)]
         )
         return (try? modelContext.fetch(descriptor)) ?? []
@@ -128,7 +155,8 @@ class ExerciseMatchingService {
     func searchExercises(query: String) -> [(exercise: Exercise, confidence: Double)] {
         guard !query.isEmpty else { return [] }
         
-        let allExercises = getAllExercises()
+        // Filter hidden in getAllExercises
+        let allExercises = getAllExercises() 
         let normalizedQuery = normalize(query)
         
         var results: [(exercise: Exercise, confidence: Double)] = []

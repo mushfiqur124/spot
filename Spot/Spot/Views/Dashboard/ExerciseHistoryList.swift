@@ -19,6 +19,7 @@ struct ExerciseHistoryList: View {
     @State private var showingRenameAlert = false
     @State private var exerciseToDelete: Exercise?
     @State private var showingDeleteConfirmation = false
+    @State private var isEditing = false
     
     @Environment(\.modelContext) private var modelContext
     
@@ -32,37 +33,58 @@ struct ExerciseHistoryList: View {
                 
                 Spacer()
                 
-                Text("\(exercisesWithHistory.count) total")
-                    .font(SpotTheme.Typography.caption)
-                    .foregroundStyle(SpotTheme.textSecondary)
+                // Edit / Done toggle
+                Button {
+                    withAnimation(.easeInOut) {
+                        isEditing.toggle()
+                        // Collapse expanded items when entering edit mode
+                        if isEditing {
+                            expandedExerciseID = nil
+                        }
+                    }
+                } label: {
+                    Text(isEditing ? "Done" : "Edit")
+                        .font(SpotTheme.Typography.caption)
+                        .fontWeight(.medium)
+                        .foregroundStyle(isEditing ? SpotTheme.sage : SpotTheme.textSecondary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule()
+                        .fill(isEditing ? SpotTheme.sage.opacity(0.1) : Color.clear)
+                )
             }
             
-            // Search
-            HStack(spacing: SpotTheme.Spacing.xs) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 14))
-                    .foregroundStyle(SpotTheme.textSecondary)
-                
-                TextField("Search exercises...", text: $searchText)
-                    .font(SpotTheme.Typography.body)
-                    .foregroundStyle(SpotTheme.textPrimary)
-                
-                if !searchText.isEmpty {
-                    Button {
-                        searchText = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 14))
-                            .foregroundStyle(SpotTheme.textSecondary)
+            // Search (hide when editing to focus on management)
+            if !isEditing {
+                HStack(spacing: SpotTheme.Spacing.xs) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 14))
+                        .foregroundStyle(SpotTheme.textSecondary)
+                    
+                    TextField("Search exercises...", text: $searchText)
+                        .font(SpotTheme.Typography.body)
+                        .foregroundStyle(SpotTheme.textPrimary)
+                    
+                    if !searchText.isEmpty {
+                        Button {
+                            searchText = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 14))
+                                .foregroundStyle(SpotTheme.textSecondary)
+                        }
                     }
                 }
+                .padding(.horizontal, SpotTheme.Spacing.sm)
+                .padding(.vertical, SpotTheme.Spacing.xs)
+                .background(
+                    RoundedRectangle(cornerRadius: SpotTheme.Radius.small)
+                        .fill(SpotTheme.textPrimary.opacity(0.05))
+                )
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
-            .padding(.horizontal, SpotTheme.Spacing.sm)
-            .padding(.vertical, SpotTheme.Spacing.xs)
-            .background(
-                RoundedRectangle(cornerRadius: SpotTheme.Radius.small)
-                    .fill(SpotTheme.textPrimary.opacity(0.05))
-            )
             
             // Exercise list
             if filteredExercises.isEmpty {
@@ -72,15 +94,22 @@ struct ExerciseHistoryList: View {
                     ForEach(Array(filteredExercises.enumerated()), id: \.element.id) { index, exercise in
                         ExerciseHistoryRow(
                             exercise: exercise,
-                            isExpanded: expandedExerciseID == exercise.id
-                        ) {
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                                if expandedExerciseID == exercise.id {
-                                    expandedExerciseID = nil
-                                } else {
-                                    expandedExerciseID = exercise.id
-                                }
+                            isExpanded: expandedExerciseID == exercise.id,
+                            isEditing: isEditing,
+                            onDeleteTap: {
+                                exerciseToDelete = exercise
+                                showingDeleteConfirmation = true
                             }
+                        ) {
+                           if !isEditing {
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                    if expandedExerciseID == exercise.id {
+                                        expandedExerciseID = nil
+                                    } else {
+                                        expandedExerciseID = exercise.id
+                                    }
+                                }
+                           }
                         }
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             Button(role: .destructive) {
@@ -128,17 +157,17 @@ struct ExerciseHistoryList: View {
         } message: {
             Text("Enter a new name for this exercise")
         }
-        .alert("Delete Exercise", isPresented: $showingDeleteConfirmation) {
+        .alert("Remove Exercise", isPresented: $showingDeleteConfirmation) {
             Button("Cancel", role: .cancel) {
                 exerciseToDelete = nil
             }
             
-            Button("Delete", role: .destructive) {
+            Button("Remove", role: .destructive) {
                 deleteExercise()
             }
         } message: {
             if let exercise = exerciseToDelete {
-                Text("Are you sure you want to delete \"\(exercise.name)\"? All workout history for this exercise will be permanently removed.")
+                Text("Remove \"\(exercise.name)\" from your list? History will be preserved but validation hidden.")
             }
         }
     }
@@ -173,7 +202,8 @@ struct ExerciseHistoryList: View {
     private func deleteExercise() {
         guard let exercise = exerciseToDelete else { return }
         
-        modelContext.delete(exercise)
+        // Soft delete: hide instead of delete
+        exercise.isHidden = true
         try? modelContext.save()
         
         exerciseToDelete = nil
@@ -182,7 +212,8 @@ struct ExerciseHistoryList: View {
     // MARK: - Computed
     
     private var exercisesWithHistory: [Exercise] {
-        exercises.filter { !$0.history.isEmpty }
+        // Filter out hidden exercises
+        exercises.filter { !$0.history.isEmpty && !$0.isHidden }
             .sorted { $0.name < $1.name }
     }
     
@@ -223,6 +254,8 @@ struct ExerciseHistoryList: View {
 private struct ExerciseHistoryRow: View {
     let exercise: Exercise
     let isExpanded: Bool
+    var isEditing: Bool = false
+    var onDeleteTap: (() -> Void)? = nil
     let onTap: () -> Void
     
     private let dateFormatter: DateFormatter = {
@@ -234,68 +267,88 @@ private struct ExerciseHistoryRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Main row
-            Button(action: onTap) {
-                HStack(spacing: SpotTheme.Spacing.sm) {
-                    // Exercise info
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: SpotTheme.Spacing.xs) {
-                            Text(exercise.name)
-                                .font(SpotTheme.Typography.subheadline)
-                                .fontWeight(.medium)
-                                .foregroundStyle(SpotTheme.textPrimary)
+            HStack(spacing: 0) {
+                // Delete button (visible when editing)
+                if isEditing {
+                    Button {
+                        onDeleteTap?()
+                    } label: {
+                        Image(systemName: "minus.circle.fill")
+                            .font(.system(size: 20))
+                            .foregroundStyle(Color.red) // Using standard red for error/delete action
+                            .padding(.trailing, SpotTheme.Spacing.sm)
+                    }
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+                }
+                
+                Button(action: onTap) {
+                    HStack(spacing: SpotTheme.Spacing.sm) {
+                        // Exercise info
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: SpotTheme.Spacing.xs) {
+                                Text(exercise.name)
+                                    .font(SpotTheme.Typography.subheadline)
+                                    .fontWeight(.medium)
+                                    .foregroundStyle(SpotTheme.textPrimary)
+                                
+                                if let maxWeight = exercise.allTimeMaxWeight, maxWeight > 0 {
+                                    Image(systemName: "trophy.fill")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(SpotTheme.sage)
+                                }
+                            }
                             
-                            if let maxWeight = exercise.allTimeMaxWeight, maxWeight > 0 {
-                                Image(systemName: "trophy.fill")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(SpotTheme.sage)
+                            HStack(spacing: SpotTheme.Spacing.xs) {
+                                Text(exercise.muscleGroup)
+                                    .font(SpotTheme.Typography.caption)
+                                    .foregroundStyle(SpotTheme.clay)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule()
+                                            .fill(SpotTheme.clay.opacity(0.15))
+                                    )
+                                
+                                Text("\(exercise.history.count) session\(exercise.history.count == 1 ? "" : "s")")
+                                    .font(SpotTheme.Typography.caption)
+                                    .foregroundStyle(SpotTheme.textSecondary)
                             }
                         }
                         
-                        HStack(spacing: SpotTheme.Spacing.xs) {
-                            Text(exercise.muscleGroup)
-                                .font(SpotTheme.Typography.caption)
-                                .foregroundStyle(SpotTheme.clay)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(
-                                    Capsule()
-                                        .fill(SpotTheme.clay.opacity(0.15))
-                                )
+                        Spacer()
+                        
+                        // Content info (hide when editing to reduce clutter)
+                        if !isEditing {
+                            // PR badge
+                            if let maxWeight = exercise.allTimeMaxWeight, maxWeight > 0 {
+                                Text("\(Int(maxWeight)) lbs")
+                                    .font(SpotTheme.Typography.caption)
+                                    .fontWeight(.medium)
+                                    .foregroundStyle(SpotTheme.sage)
+                                    .padding(.horizontal, SpotTheme.Spacing.xs)
+                                    .padding(.vertical, 4)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 4)
+                                            .fill(SpotTheme.sage.opacity(0.1))
+                                    )
+                            }
                             
-                            Text("\(exercise.history.count) session\(exercise.history.count == 1 ? "" : "s")")
-                                .font(SpotTheme.Typography.caption)
+                            // Expand indicator
+                            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 12, weight: .medium))
                                 .foregroundStyle(SpotTheme.textSecondary)
                         }
                     }
-                    
-                    Spacer()
-                    
-                    // PR badge
-                    if let maxWeight = exercise.allTimeMaxWeight, maxWeight > 0 {
-                        Text("\(Int(maxWeight)) lbs")
-                            .font(SpotTheme.Typography.caption)
-                            .fontWeight(.medium)
-                            .foregroundStyle(SpotTheme.sage)
-                            .padding(.horizontal, SpotTheme.Spacing.xs)
-                            .padding(.vertical, 4)
-                            .background(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .fill(SpotTheme.sage.opacity(0.1))
-                            )
-                    }
-                    
-                    // Expand indicator
-                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(SpotTheme.textSecondary)
+                    .padding(.vertical, SpotTheme.Spacing.sm)
+                    .contentShape(Rectangle())
                 }
-                .padding(.vertical, SpotTheme.Spacing.sm)
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .disabled(isEditing) // Disable expansion when in edit mode
             }
-            .buttonStyle(.plain)
+            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isEditing)
             
             // Expanded content
-            if isExpanded {
+            if isExpanded && !isEditing {
                 expandedContent
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
@@ -303,7 +356,7 @@ private struct ExerciseHistoryRow: View {
         .padding(.horizontal, SpotTheme.Spacing.sm)
         .background(
             RoundedRectangle(cornerRadius: SpotTheme.Radius.small)
-                .fill(isExpanded ? SpotTheme.textPrimary.opacity(0.03) : Color.clear)
+                .fill(isExpanded && !isEditing ? SpotTheme.textPrimary.opacity(0.03) : Color.clear)
         )
     }
     

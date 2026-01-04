@@ -29,6 +29,9 @@ final class Exercise {
     /// Cached max volume (Weight * Reps) for a single set
     var allTimeMaxVolume: Double?
     
+    /// Whether the user has "soft deleted" (hidden) this exercise
+    var isHidden: Bool = false
+    
     // MARK: - Relationships
     
     /// All instances of this exercise ever performed (inverse relationship)

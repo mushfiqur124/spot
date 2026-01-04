@@ -234,7 +234,11 @@ struct ChatView: View {
                     
                     // Chat messages
                     ForEach(viewModel.messages) { message in
-                        MessageBubble(message: message, onEditExercise: handleEditExercise)
+                        MessageBubble(
+                            message: message, 
+                            onEditExercise: handleEditExercise,
+                            onDeleteExercise: handleDeleteExercise
+                        )
                     }
                     
                     // Streaming response (shows while AI is responding)
@@ -420,6 +424,10 @@ struct ChatView: View {
         if success {
             viewModel.reloadCurrentMessages()
         }
+    }
+    
+    private func handleDeleteExercise(name: String) {
+        viewModel.handleExerciseDeletion(name: name)
     }
 }
 

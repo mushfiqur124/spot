@@ -3,20 +3,26 @@ import SwiftUI
 struct SetLoggedCard: View {
     let info: LoggedExerciseInfo
     let onEdit: ((LoggedExerciseInfo.ExerciseEntry, String, [(weight: Double, reps: Int)]) -> Void)?
+    let onDelete: ((String) -> Void)?
     
     // Animation states
     @State private var opacity: Double = 0
     @State private var scale: CGFloat = 0.9
     
-    init(info: LoggedExerciseInfo, onEdit: ((LoggedExerciseInfo.ExerciseEntry, String, [(weight: Double, reps: Int)]) -> Void)? = nil) {
+    init(
+        info: LoggedExerciseInfo,
+        onEdit: ((LoggedExerciseInfo.ExerciseEntry, String, [(weight: Double, reps: Int)]) -> Void)? = nil,
+        onDelete: ((String) -> Void)? = nil
+    ) {
         self.info = info
         self.onEdit = onEdit
+        self.onDelete = onDelete
     }
     
     var body: some View {
         VStack(spacing: SpotTheme.Spacing.sm) {
             ForEach(info.exercises) { exercise in
-                ExerciseLoggedRow(exercise: exercise, onEdit: onEdit)
+                ExerciseLoggedRow(exercise: exercise, onEdit: onEdit, onDelete: onDelete)
             }
         }
         .padding(.horizontal, SpotTheme.Spacing.md)
@@ -36,6 +42,7 @@ struct SetLoggedCard: View {
 private struct ExerciseLoggedRow: View {
     let exercise: LoggedExerciseInfo.ExerciseEntry
     let onEdit: ((LoggedExerciseInfo.ExerciseEntry, String, [(weight: Double, reps: Int)]) -> Void)?
+    let onDelete: ((String) -> Void)?
     
     @State private var showEditSheet = false
     
@@ -115,9 +122,13 @@ private struct ExerciseLoggedRow: View {
                 )
         )
         .sheet(isPresented: $showEditSheet) {
-            EditExerciseSheet(exercise: exercise) { newName, updatedSets in
-                onEdit?(exercise, newName, updatedSets)
-            }
+            EditExerciseSheet(
+                exercise: exercise,
+                onSave: { newName, updatedSets in
+                    onEdit?(exercise, newName, updatedSets)
+                },
+                onDelete: onDelete
+            )
         }
     }
 }

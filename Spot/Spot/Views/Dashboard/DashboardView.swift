@@ -97,6 +97,7 @@ struct DashboardView: View {
         
         // Load all exercises with history
         let exerciseDescriptor = FetchDescriptor<Exercise>(
+            predicate: #Predicate { !$0.isHidden },
             sortBy: [SortDescriptor(\.name)]
         )
         exercises = (try? modelContext.fetch(exerciseDescriptor)) ?? []

@@ -577,7 +577,8 @@ class WorkoutService {
         guard let session = getActiveSession() else { return false }
         
         // Find the workout exercise by current name
-        let result = matchingService.findBestMatch(for: exerciseName)
+        // Include hidden exercises because we might be editing one
+        let result = matchingService.findBestMatch(for: exerciseName, includeHidden: true)
         guard let exercise = result.exercise, result.confidence >= matchingService.fuzzyMatchThreshold else { return false }
         
         guard let workoutExercise = session.exercises.first(where: { $0.exercise?.id == exercise.id }) else {

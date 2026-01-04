@@ -88,7 +88,7 @@ class ExerciseSuggestionService {
         let matching = allExercises.filter { exercise in
             let matchesGroup = normalizedGroups.contains(exercise.muscleGroup.lowercased())
             let isExcluded = normalizedExcluded.contains(exercise.name.lowercased())
-            return matchesGroup && !isExcluded
+            return matchesGroup && !isExcluded && !exercise.isHidden
         }
         
         // Sort by most recently performed (exercises with history first)

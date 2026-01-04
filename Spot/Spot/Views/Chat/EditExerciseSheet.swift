@@ -15,6 +15,7 @@ struct EditExerciseSheet: View {
     
     let exercise: LoggedExerciseInfo.ExerciseEntry
     let onSave: (String, [(weight: Double, reps: Int)]) -> Void
+    let onDelete: ((String) -> Void)?
     
     @State private var exerciseName: String
     @State private var editableSets: [EditableSet]
@@ -23,7 +24,6 @@ struct EditExerciseSheet: View {
     
     @State private var matchingService: ExerciseMatchingService?
     @State private var searchResults: [(exercise: Exercise, confidence: Double)] = []
-    @State private var allExercises: [Exercise] = []
     
     struct EditableSet: Identifiable {
         let id = UUID()
@@ -33,10 +33,12 @@ struct EditExerciseSheet: View {
     
     init(
         exercise: LoggedExerciseInfo.ExerciseEntry,
-        onSave: @escaping (String, [(weight: Double, reps: Int)]) -> Void
+        onSave: @escaping (String, [(weight: Double, reps: Int)]) -> Void,
+        onDelete: ((String) -> Void)? = nil
     ) {
         self.exercise = exercise
         self.onSave = onSave
+        self.onDelete = onDelete
         _exerciseName = State(initialValue: exercise.exerciseName)
         _editableSets = State(initialValue: exercise.sets.map { 
             EditableSet(weight: $0.weight, reps: $0.reps) 
@@ -96,28 +98,22 @@ struct EditExerciseSheet: View {
             .sheet(isPresented: $showExercisePicker) {
                 ExercisePickerSheet(
                     currentName: exerciseName,
-                    allExercises: allExercises,
                     searchResults: searchResults,
                     searchQuery: $searchQuery,
                     onSearch: performSearch,
                     onSelect: { name in
                         exerciseName = name
                         showExercisePicker = false
-                    }
+                    },
+                    onDelete: onDelete
                 )
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
             }
             .onAppear {
                 matchingService = ExerciseMatchingService(modelContext: modelContext)
-                loadExercises()
             }
         }
-    }
-    
-    private func loadExercises() {
-        guard let service = matchingService else { return }
-        allExercises = service.getAllExercises()
     }
     
     private func performSearch(_ query: String) {
@@ -188,14 +184,17 @@ private struct ExercisePickerSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     
+    // Live query for all exercises, ensuring instant updates
+    @Query(filter: #Predicate<Exercise> { !$0.isHidden }, sort: [SortDescriptor(\Exercise.name)])
+    private var allExercises: [Exercise]
+    
     let currentName: String
-    let allExercises: [Exercise]
     let searchResults: [(exercise: Exercise, confidence: Double)]
     @Binding var searchQuery: String
     let onSearch: (String) -> Void
     let onSelect: (String) -> Void
+    let onDelete: ((String) -> Void)?
     
-    @State private var hasLoaded = false
     @State private var editingExercise: Exercise?
     @State private var editedName: String = ""
     @State private var showingRenameAlert = false
@@ -235,39 +234,19 @@ private struct ExercisePickerSheet: View {
                 if !searchResults.isEmpty {
                     Section {
                         ForEach(searchResults, id: \.exercise.id) { result in
-                            Button {
-                                onSelect(result.exercise.name)
-                            } label: {
-                                HStack {
-                                    Text(result.exercise.name)
-                                        .foregroundStyle(SpotTheme.textPrimary)
-                                    Spacer()
-                                    if result.confidence >= 0.8 {
-                                        Text("Best match")
-                                            .font(SpotTheme.Typography.caption)
-                                            .foregroundStyle(SpotTheme.sage)
-                                    } else if result.exercise.name == currentName {
-                                        Image(systemName: "checkmark")
-                                            .foregroundStyle(SpotTheme.sage)
-                                            .font(.system(size: 14, weight: .semibold))
-                                    }
-                                }
-                            }
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                Button(role: .destructive) {
-                                    exerciseToDelete = result.exercise
+                            ExerciseRow(
+                                exercise: result.exercise,
+                                currentName: currentName,
+                                isBestMatch: result.confidence >= 0.8,
+                                onSelect: onSelect,
+                                onDelete: { exercise in
+                                    exerciseToDelete = exercise
                                     showingDeleteConfirmation = true
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
+                                },
+                                onEdit: { exercise in
+                                    startEditing(exercise)
                                 }
-                                
-                                Button {
-                                    startEditing(result.exercise)
-                                } label: {
-                                    Label("Edit", systemImage: "pencil")
-                                }
-                                .tint(SpotTheme.clay)
-                            }
+                            )
                         }
                     } header: {
                         Text("Matching Exercises")
@@ -275,38 +254,23 @@ private struct ExercisePickerSheet: View {
                 }
                 
                 // All exercises when no search
+                // Using @Query backed allExercises here ensures this list is always fresh
                 if searchQuery.isEmpty {
                     Section {
                         ForEach(allExercises) { exercise in
-                            Button {
-                                onSelect(exercise.name)
-                            } label: {
-                                HStack {
-                                    Text(exercise.name)
-                                        .foregroundStyle(SpotTheme.textPrimary)
-                                    Spacer()
-                                    if exercise.name == currentName {
-                                        Image(systemName: "checkmark")
-                                            .foregroundStyle(SpotTheme.sage)
-                                            .font(.system(size: 14, weight: .semibold))
-                                    }
-                                }
-                            }
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                Button(role: .destructive) {
+                            ExerciseRow(
+                                exercise: exercise,
+                                currentName: currentName,
+                                isBestMatch: false,
+                                onSelect: onSelect,
+                                onDelete: { exercise in
                                     exerciseToDelete = exercise
                                     showingDeleteConfirmation = true
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
-                                }
-                                
-                                Button {
+                                },
+                                onEdit: { exercise in
                                     startEditing(exercise)
-                                } label: {
-                                    Label("Edit", systemImage: "pencil")
                                 }
-                                .tint(SpotTheme.clay)
-                            }
+                            )
                         }
                     } header: {
                         Text("Your Exercises")
@@ -347,7 +311,7 @@ private struct ExercisePickerSheet: View {
                 }
             } message: {
                 if let exercise = exerciseToDelete {
-                    Text("Are you sure you want to delete \"\(exercise.name)\"? All workout history for this exercise will be permanently removed.")
+                    Text("Are you sure you want to delete \"\(exercise.name)\" from your list? Your history for this exercise will be preserved but hidden.")
                 }
             }
         }
@@ -385,10 +349,62 @@ private struct ExercisePickerSheet: View {
     private func deleteExercise() {
         guard let exercise = exerciseToDelete else { return }
         
-        modelContext.delete(exercise)
+        let name = exercise.name
+        
+        // Notify parent about deletion before physically deleting
+        onDelete?(name)
+        
+        // Soft delete (hide) instead of hard delete
+        exercise.isHidden = true
         try? modelContext.save()
         
         exerciseToDelete = nil
+    }
+}
+
+// MARK: - Exercise Row Component
+
+private struct ExerciseRow: View {
+    let exercise: Exercise
+    let currentName: String
+    let isBestMatch: Bool
+    let onSelect: (String) -> Void
+    let onDelete: (Exercise) -> Void
+    let onEdit: (Exercise) -> Void
+    
+    var body: some View {
+        Button {
+            onSelect(exercise.name)
+        } label: {
+            HStack {
+                Text(exercise.name)
+                    .foregroundStyle(SpotTheme.textPrimary)
+                Spacer()
+                if isBestMatch {
+                    Text("Best match")
+                        .font(SpotTheme.Typography.caption)
+                        .foregroundStyle(SpotTheme.sage)
+                } else if exercise.name == currentName {
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(SpotTheme.sage)
+                        .font(.system(size: 14, weight: .semibold))
+                }
+            }
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) {
+                onDelete(exercise)
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+            
+            Button {
+                onEdit(exercise)
+            } label: {
+                Label("Edit", systemImage: "pencil")
+            }
+            .tint(SpotTheme.clay)
+        }
     }
 }
 

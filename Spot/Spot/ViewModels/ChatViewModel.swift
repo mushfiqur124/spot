@@ -687,6 +687,25 @@ class ChatViewModel: ObservableObject {
         return success
     }
     
+    /// Handle the deletion of an exercise from the list
+    func handleExerciseDeletion(name: String) {
+        guard let conversation = currentConversation else { return }
+        
+        // add a system message to confirm deletion
+        let message = ChatMessage(
+            content: "Deleted **\(name)** from your exercises.",
+            role: .assistant,
+            conversation: conversation
+        )
+        
+        conversation.messages.append(message)
+        modelContext.insert(message)
+        messages.append(message)
+        
+        refreshLoggedExerciseCards()
+        objectWillChange.send()
+    }
+    
     /// Reload messages for the current conversation
     func reloadCurrentMessages() {
         if let conversation = currentConversation {
